@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS core.business_applications (
-    tenant_id TEXT,
+    tenant_id TEXT NOT NULL,
     business_application_id TEXT,
     application_name TEXT,
     emergency_tier TEXT,
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS core.business_applications (
     latest_released_version TEXT,
     latest_release_date TIMESTAMP,
     latest_release_documentation_link TEXT,
-    company_id TEXT,
+    company_id TEXT NOT NULL,
     company_name TEXT,
     tags JSONB DEFAULT '[]'::jsonb,
     sensitive BOOLEAN DEFAULT FALSE,
@@ -35,5 +35,8 @@ CREATE TABLE IF NOT EXISTS core.business_applications (
     valid_from TIMESTAMP,
     valid_to TIMESTAMP,
     created_ts TIMESTAMP,
-    updated_ts TIMESTAMP
+    updated_ts TIMESTAMP,
+    CONSTRAINT chk_business_applications_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
+    CONSTRAINT chk_business_applications_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> ''),
+    CONSTRAINT pk_core_business_applications PRIMARY KEY (tenant_id, company_id, business_application_id)
 );

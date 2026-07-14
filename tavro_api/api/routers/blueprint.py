@@ -967,8 +967,9 @@ async def save_researched_nodes(
 
         ins = await db.execute(
             text("""INSERT INTO twin.dim_node
-                    (company_id, dim_type_id, label, summary, tags, visibility, sensitive)
-                    VALUES (:company_id, :dim_type_id, :label, :summary,
+                    (tenant_id, company_id, dim_type_id, label, summary, tags, visibility, sensitive)
+                    VALUES ((SELECT tenant_id FROM twin.company WHERE id = :company_id),
+                            :company_id, :dim_type_id, :label, :summary,
                             cast(:tags as jsonb), :visibility, :sensitive)
                     RETURNING id"""),
             {"company_id": body.company_id, "dim_type_id": dim_type_id,
@@ -1045,8 +1046,9 @@ async def seed_template(
 
         ins = await db.execute(
             text("""INSERT INTO twin.dim_node
-                    (company_id, dim_type_id, label, summary, tags, visibility, sensitive)
-                    VALUES (:company_id, :dim_type_id, :label, :summary,
+                    (tenant_id, company_id, dim_type_id, label, summary, tags, visibility, sensitive)
+                    VALUES ((SELECT tenant_id FROM twin.company WHERE id = :company_id),
+                            :company_id, :dim_type_id, :label, :summary,
                             cast(:tags as jsonb), :visibility, :sensitive)
                     RETURNING id"""),
             {"company_id":  body.company_id,

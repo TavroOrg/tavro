@@ -156,32 +156,9 @@ async def _ensure_agent_attachments_table(db: AsyncSession) -> None:
     global _AGENT_ATTACHMENTS_READY
     if _AGENT_ATTACHMENTS_READY:
         return
-
-    await db.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS public.agent_attachment (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                agent_id TEXT NOT NULL,
-                filename TEXT NOT NULL,
-                mime_type TEXT,
-                file_size_bytes INT NOT NULL,
-                file_data BYTEA NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-    )
-    await db.execute(
-        text(
-            """
-            CREATE INDEX IF NOT EXISTS agent_attachment_agent_idx
-            ON public.agent_attachment (agent_id, created_at DESC)
-            """
-        )
-    )
-    await db.commit()
+    # Table is defined in sql/core/agent_attachment.sql, created by
+    # tavro-api's init_tables.py on every app startup. We only warm the
+    # ready-flag here so callers below use the real core.agent_attachment.
     _AGENT_ATTACHMENTS_READY = True
 
 class SuggestAgentDescriptionRequest(BaseModel):
@@ -264,8 +241,7 @@ async def get_agent_catalog(
                         ag.agent_type AS _core_agent_type
                     FROM {CURATED}.agent_360 a360
                     LEFT JOIN {CORE}.agents ag
-                      ON ag.agent_internal_id = a360.agent_internal_id
-                     AND ag.agent_id = a360.agent_id
+                      ON ag.agent_id = a360.agent_id
                      AND COALESCE(ag.is_current, true) = true
                      AND ag.tenant_id = a360.tenant_id
                     {where}
@@ -299,7 +275,7 @@ async def get_agent_catalog(
             extra_result = await db.execute(
                 text(f"""
                     SELECT
-                        a.agent_id, a.agent_internal_id, a.agent_name AS agent_name,
+                        a.agent_id, a.agent_id AS agent_internal_id, a.agent_name AS agent_name,
                         a.agent_description, a.tenant_id,
                         {("a.company_id," if has_core_company_id else "NULL AS company_id,")}
                         COALESCE(a.agent_type, 'Config-driven') AS agent_type,
@@ -362,7 +338,7 @@ async def get_agent_catalog(
         result2 = await db.execute(
             text(f"""
                 SELECT
-                    a.agent_id, a.agent_internal_id, a.agent_name, a.agent_description,
+                    a.agent_id, a.agent_id AS agent_internal_id, a.agent_name, a.agent_description,
                     a.tenant_id, a.created_ts, a.updated_ts,
                     COALESCE(a.agent_type, 'Config-driven') AS agent_type,
                     ROW_NUMBER() OVER () AS rn, COUNT(*) OVER () AS total_records
@@ -933,7 +909,7 @@ def _write_agent_card(
 async def _get_agent_identity(db: AsyncSession, agent_id: str, tenant_id: str):
     result = await db.execute(
         text(f"""
-            SELECT agent_id, agent_name, agent_internal_id
+            SELECT agent_id, agent_name, agent_id AS agent_internal_id
             FROM {CORE}.agents
             WHERE agent_id = :aid
               AND tenant_id = :tid
@@ -962,7 +938,7 @@ async def create_agent(
     db: AsyncSession = Depends(get_db),
 ):
     agent_id = str(uuid.uuid4())
-    agent_internal_id = str(uuid.uuid4())
+    agent_internal_id = agent_id
     tenant_id = _require_tenant(request)
     provider = "Portal"
     cid = company_id.strip() if company_id and company_id.strip() else None
@@ -972,15 +948,15 @@ async def create_agent(
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.agents
-                    (tenant_id, agent_internal_id, agent_id, agent_name, agent_description,
+                    (tenant_id, agent_id, agent_name, agent_description,
                      source_system, created_ts, updated_ts, is_current, company_id, company_name,
                      agent_type)
                 VALUES
-                    (:tid, :iid, :aid, :name, :desc,
+                    (:tid, :aid, :name, :desc,
                      :source_system, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true, :cid, :cname,
                      :agent_type)
             """),
-            {"tid": tenant_id, "iid": agent_internal_id, "aid": agent_id,
+            {"tid": tenant_id, "aid": agent_id,
              "name": body.agent_name, "desc": body.description,
              "source_system": provider, "cid": cid, "cname": cname,
              "agent_type": (body.agent_type or "Config-driven").strip()},
@@ -989,14 +965,14 @@ async def create_agent(
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.agent_identifications
-                    (tenant_id, company_id, agent_internal_id, agent_id, instruction,
+                    (tenant_id, company_id, agent_id, instruction,
                      role, environment, governance_status, created_ts, updated_ts, is_current)
                 VALUES
-                    (:tid, :cid, :iid, :aid, :instruction,
+                    (:tid, :cid, :aid, :instruction,
                      :role, :environment, 'Risk Assessment is running',
                      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true)
             """),
-            {"tid": tenant_id, "cid": cid, "iid": agent_internal_id, "aid": agent_id,
+            {"tid": tenant_id, "cid": cid, "aid": agent_id,
              "instruction": body.instruction,
              "role": body.role or None,
              "environment": body.environment or None},
@@ -1031,18 +1007,18 @@ async def create_agent(
             await db.execute(
                 text(f"""
                     INSERT INTO {CORE}.agent_tools
-                        (tenant_id, company_id, agent_internal_id, tool_id, agent_id,
+                        (tenant_id, company_id, tool_id, agent_id,
                          agent_name, tool_name, created_ts, updated_ts)
                     VALUES
-                        (:tid, :cid, :iid, :tool_id, :aid,
+                        (:tid, :cid, :tool_id, :aid,
                          :aname, :tname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
+                    ON CONFLICT (agent_id, tool_id) DO UPDATE SET
                         agent_id   = EXCLUDED.agent_id,
                         agent_name = EXCLUDED.agent_name,
                         tool_name  = EXCLUDED.tool_name,
                         updated_ts = EXCLUDED.updated_ts
                 """),
-                {"tid": tenant_id, "cid": cid, "iid": agent_internal_id, "tool_id": tool_id,
+                {"tid": tenant_id, "cid": cid, "tool_id": tool_id,
                  "aid": agent_id, "aname": body.agent_name, "tname": tool_name},
             )
 
@@ -1079,37 +1055,36 @@ async def create_agent(
             await db.execute(
                 text(f"""
                     INSERT INTO {CORE}.agent_tables
-                        (tenant_id, company_id, agent_id, agent_name, agent_internal_id,
+                        (tenant_id, company_id, agent_id, agent_name,
                          table_id, table_name, created_ts, updated_ts)
                     VALUES
-                        (:tid, :cid, :aid, :aname, :iid, :table_id, :table_name,
+                        (:tid, :cid, :aid, :aname, :table_id, :table_name,
                          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET
                         agent_name = EXCLUDED.agent_name,
-                        agent_internal_id = EXCLUDED.agent_internal_id,
                         table_name = COALESCE(EXCLUDED.table_name, {CORE}.agent_tables.table_name),
                         updated_ts = EXCLUDED.updated_ts
                 """),
                 {"tid": tenant_id, "cid": cid, "aid": agent_id, "aname": body.agent_name,
-                 "iid": agent_internal_id, "table_id": table_id, "table_name": table_name},
+                 "table_id": table_id, "table_name": table_name},
             )
 
             if table_tool_id:
                 await db.execute(
                     text(f"""
                         INSERT INTO {CORE}.agent_data_sources (
-                            tenant_id, company_id, agent_internal_id, agent_id,
+                            tenant_id, company_id, agent_id,
                             created_ts, updated_ts,
                             source_object_id, source_object_name, source_object_type,
                             target_object_id, target_object_name, target_object_type
                         )
                         VALUES (
-                            :tid, :cid, :iid, :aid,
+                            :tid, :cid, :aid,
                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
                             :tool_id, :tool_name, 'Tool',
                             :table_id, :table_name, 'Table'
                         )
-                        ON CONFLICT (agent_internal_id, source_object_id, target_object_id)
+                        ON CONFLICT (agent_id, source_object_id, target_object_id)
                         DO UPDATE SET
                             updated_ts = EXCLUDED.updated_ts,
                             source_object_name = EXCLUDED.source_object_name,
@@ -1118,7 +1093,6 @@ async def create_agent(
                     {
                         "tid": tenant_id,
                         "cid": cid,
-                        "iid": agent_internal_id,
                         "aid": agent_id,
                         "tool_id": table_tool_id,
                         "tool_name": table.get("tool_name"),
@@ -1152,13 +1126,13 @@ async def create_agent(
                 await db.execute(
                     text(f"""
                         INSERT INTO {CORE}.agent_data_sources (
-                            tenant_id, company_id, agent_internal_id, agent_id,
+                            tenant_id, company_id, agent_id,
                             created_ts, updated_ts,
                             source_object_id, source_object_name, source_object_type,
                             target_object_id, target_object_name, target_object_type
                         )
                         VALUES (
-                            :tid, :cid, :iid, :aid,
+                            :tid, :cid, :aid,
                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
                             :aid, :agent_name, 'Agent',
                             :table_id, :table_name, 'Table'
@@ -1167,7 +1141,6 @@ async def create_agent(
                     {
                         "tid": tenant_id,
                         "cid": cid,
-                        "iid": agent_internal_id,
                         "aid": agent_id,
                         "agent_name": body.agent_name,
                         "table_id": table_id,
@@ -1206,18 +1179,18 @@ async def create_agent(
                 await db.execute(
                     text(f"""
                         INSERT INTO {CORE}.agent_data_sources (
-                            tenant_id, company_id, agent_internal_id, agent_id,
+                            tenant_id, company_id, agent_id,
                             created_ts, updated_ts,
                             source_object_id, source_object_name, source_object_type,
                             target_object_id, target_object_name, target_object_type
                         )
                         VALUES (
-                            :tid, :cid, :iid, :aid,
+                            :tid, :cid, :aid,
                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
                             :table_id, :table_name, 'Table',
                             :col_id, :column_name, 'Column'
                         )
-                        ON CONFLICT (agent_internal_id, source_object_id, target_object_id)
+                        ON CONFLICT (agent_id, source_object_id, target_object_id)
                         DO UPDATE SET
                             updated_ts = EXCLUDED.updated_ts,
                             source_object_name = EXCLUDED.source_object_name,
@@ -1226,7 +1199,6 @@ async def create_agent(
                     {
                         "tid": tenant_id,
                         "cid": cid,
-                        "iid": agent_internal_id,
                         "aid": agent_id,
                         "table_id": table_id,
                         "table_name": table_name,
@@ -1239,13 +1211,13 @@ async def create_agent(
             await db.execute(
                 text(f"""
                     INSERT INTO {CORE}.agent_knowledge_sources
-                        (tenant_id, company_id, agent_internal_id, agent_id, name, description,
+                        (tenant_id, company_id, agent_id, name, description,
                          created_ts, updated_ts)
                     VALUES
-                        (:tid, :cid, :iid, :aid, :name, :desc,
+                        (:tid, :cid, :aid, :name, :desc,
                          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """),
-                {"tid": tenant_id, "cid": cid, "iid": agent_internal_id, "aid": agent_id,
+                {"tid": tenant_id, "cid": cid, "aid": agent_id,
                  "name": body.knowledge_source.get("name", ""),
                  "desc": body.knowledge_source.get("description", "")},
             )
@@ -1289,16 +1261,15 @@ async def create_agent(
                 text(f"""
                     INSERT INTO {CORE}.agent_issues (
                         tenant_id, company_id, issue_id, title, agent_id, agent_name,
-                        agent_internal_id, created_ts, updated_ts
+                        created_ts, updated_ts
                     ) VALUES (
                         :tid, :cid, :identifier, :title, :agent_id, :agent_name,
-                        :agent_internal_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                     )
                 """),
                 {
                     "tid": tenant_id, "cid": cid, "identifier": identifier, "title": title,
                     "agent_id": agent_id, "agent_name": body.agent_name,
-                    "agent_internal_id": agent_internal_id,
                 },
             )
         for skill in _normalize_skill_entries(body.skills):
@@ -1327,13 +1298,13 @@ async def create_agent(
                 text(f"""
                     INSERT INTO {CORE}.agent_skills
                         (tenant_id, company_id, skill_id, skill_name, agent_id, agent_name,
-                         agent_internal_id, created_ts, updated_ts)
+                         created_ts, updated_ts)
                     VALUES
                         (:tid, :cid, :sid, :sname, :aid, :aname,
-                         :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """),
                 {"tid": tenant_id, "cid": cid, "sid": skill["skill_id"], "sname": skill["skill_name"],
-                 "aid": agent_id, "aname": body.agent_name, "iid": agent_internal_id},
+                 "aid": agent_id, "aname": body.agent_name},
             )
 
         # Insert a placeholder row into curated.agent_360 immediately so the
@@ -1342,22 +1313,22 @@ async def create_agent(
         await db.execute(
             text(f"""
                 INSERT INTO {CURATED}.agent_360 (
-                    tenant_id, agent_id, agent_internal_id, agent_name, agent_description,
+                    tenant_id, agent_id, agent_name, agent_description,
                     snapshot_ts,
                     tool_count, data_source_count, business_application_count,
                     business_process_count, ai_model_count,
                     contains_pii, contains_phi, contains_pci,
                     company_id, company_name, agent_type
                 ) VALUES (
-                    :tid, :aid, :iid, :name, :desc,
+                    :tid, :aid, :name, :desc,
                     CURRENT_TIMESTAMP,
                     0, 0, 0, 0, 0,
                     false, false, false,
                     :cid, :cname, :agent_type
                 )
-                ON CONFLICT (agent_internal_id) DO NOTHING
+                ON CONFLICT (agent_id) DO NOTHING
             """),
-            {"tid": tenant_id, "aid": agent_id, "iid": agent_internal_id,
+            {"tid": tenant_id, "aid": agent_id,
              "name": body.agent_name, "desc": body.description, "cid": cid, "cname": cname,
              "agent_type": (body.agent_type or "Config-driven").strip()},
         )
@@ -1442,7 +1413,7 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
         result = await db.execute(
             text(f"""
                 SELECT
-                    a.agent_id, a.agent_internal_id, a.agent_name, a.agent_description,
+                    a.agent_id, a.agent_id AS agent_internal_id, a.agent_name, a.agent_description,
                     a.source_system, a.created_ts, a.updated_ts, a.tenant_id,
                     COALESCE(a.agent_type, 'Config-driven') AS agent_type,
                     COALESCE(a.status, 'Plan') AS status,
@@ -1460,7 +1431,7 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
                 LEFT JOIN LATERAL (
                     SELECT blended_risk_class AS risk_classification, blended_risk_score
                     FROM {CORE}.agent_risk_assessments
-                    WHERE agent_internal_id = a.agent_internal_id
+                    WHERE agent_id = a.agent_id
                       AND COALESCE(is_current, true) = true
                     ORDER BY is_current DESC NULLS LAST, updated_ts DESC NULLS LAST
                     LIMIT 1
@@ -1585,7 +1556,7 @@ async def trigger_risk_assessment(
     try:
         result = await db.execute(
             text(f"""
-                SELECT a.agent_internal_id, a.agent_id, a.agent_name, a.agent_description,
+                SELECT a.agent_id AS agent_internal_id, a.agent_id, a.agent_name, a.agent_description,
                        a.source_system, i.instruction
                 FROM {CORE}.agents a
                 LEFT JOIN LATERAL (
@@ -1633,7 +1604,7 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
     try:
         exists = await db.execute(
             text(f"""
-                SELECT agent_internal_id, agent_name, company_id
+                SELECT agent_id AS agent_internal_id, agent_name, company_id
                 FROM {CORE}.agents
                 WHERE agent_id = :aid AND tenant_id = :tid
                 LIMIT 1
@@ -1741,7 +1712,7 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                     {"tid": tenant_id, "ids": old_identifiers},
                 )
             agent_row = await db.execute(
-                text(f"SELECT agent_name, agent_internal_id FROM {CORE}.agents WHERE agent_id = :aid AND tenant_id = :tid LIMIT 1"),
+                text(f"SELECT agent_name, agent_id AS agent_internal_id FROM {CORE}.agents WHERE agent_id = :aid AND tenant_id = :tid LIMIT 1"),
                 {"aid": agent_id, "tid": tenant_id},
             )
             agent_info = agent_row.mappings().first() or {}
@@ -1795,22 +1766,20 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                     text(f"""
                         INSERT INTO {CORE}.agent_issues (
                             tenant_id, company_id, issue_id, title, agent_id, agent_name,
-                            agent_internal_id, created_ts, updated_ts
+                            created_ts, updated_ts
                         ) VALUES (
                             :tid, :update_cid, :identifier, :title, :agent_id, :agent_name,
-                            :agent_internal_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                         )
                         ON CONFLICT (tenant_id, issue_id, agent_id) DO UPDATE SET
                             title = EXCLUDED.title,
                             agent_name = EXCLUDED.agent_name,
-                            agent_internal_id = EXCLUDED.agent_internal_id,
                             updated_ts = CURRENT_TIMESTAMP
                     """),
                     {
                         "tid": tenant_id, "update_cid": update_cid, "identifier": identifier, "title": title,
                         "agent_id": agent_id,
                         "agent_name": agent_info.get("agent_name", ""),
-                        "agent_internal_id": agent_info.get("agent_internal_id", ""),
                     },
                 )
 
@@ -1859,19 +1828,17 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                     text(f"""
                         INSERT INTO {CORE}.agent_skills
                             (tenant_id, company_id, skill_id, skill_name, agent_id, agent_name,
-                             agent_internal_id, created_ts, updated_ts)
+                             created_ts, updated_ts)
                         VALUES
                             (:tid, :cid, :sid, :sname, :aid, :aname,
-                             :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         ON CONFLICT (tenant_id, skill_id, agent_id) DO UPDATE SET
                             skill_name = EXCLUDED.skill_name,
                             agent_name = EXCLUDED.agent_name,
-                            agent_internal_id = EXCLUDED.agent_internal_id,
                             updated_ts = EXCLUDED.updated_ts
                     """),
                     {"tid": tenant_id, "cid": update_cid, "sid": skill["skill_id"], "sname": skill["skill_name"],
-                     "aid": agent_id, "aname": effective_agent_name,
-                     "iid": str(agent_row["agent_internal_id"])},
+                     "aid": agent_id, "aname": effective_agent_name},
                 )
 
         await db.commit()
@@ -1892,7 +1859,7 @@ async def delete_agent(agent_id: str, request: Request, db: AsyncSession = Depen
     tenant_id = _require_tenant(request)
     try:
         row = await db.execute(
-            text(f"SELECT agent_internal_id FROM {CORE}.agents WHERE agent_id = :aid AND tenant_id = :tid LIMIT 1"),
+            text(f"SELECT agent_id AS agent_internal_id FROM {CORE}.agents WHERE agent_id = :aid AND tenant_id = :tid LIMIT 1"),
             {"aid": agent_id, "tid": tenant_id},
         )
         mapping = row.mappings().first()
@@ -1940,7 +1907,7 @@ async def delete_agent(agent_id: str, request: Request, db: AsyncSession = Depen
             )
 
         await db.execute(
-            text(f"DELETE FROM {CORE}.agent_risk_assessments WHERE agent_internal_id = :iid AND tenant_id = :tid"),
+            text(f"DELETE FROM {CORE}.agent_risk_assessments WHERE agent_id = :iid AND tenant_id = :tid"),
             {"iid": internal_id, "tid": tenant_id},
         )
         await db.execute(
@@ -1952,7 +1919,7 @@ async def delete_agent(agent_id: str, request: Request, db: AsyncSession = Depen
             try:
                 sp = await db.begin_nested()
                 await db.execute(
-                    text(f"DELETE FROM {schema_table} WHERE agent_internal_id = :iid AND tenant_id = :tid"),
+                    text(f"DELETE FROM {schema_table} WHERE agent_id = :iid AND tenant_id = :tid"),
                     {"iid": internal_id, "tid": tenant_id},
                 )
                 await sp.commit()
@@ -1980,7 +1947,7 @@ async def list_agent_attachments(agent_id: str, db: AsyncSession = Depends(get_d
         text(
             """
             SELECT id, agent_id, filename, mime_type, file_size_bytes, created_at, updated_at
-            FROM public.agent_attachment
+            FROM core.agent_attachment
             WHERE agent_id = :agent_id
             ORDER BY created_at DESC
             """
@@ -2016,7 +1983,7 @@ async def create_agent_attachment(
     row = await db.execute(
         text(
             """
-            INSERT INTO public.agent_attachment
+            INSERT INTO core.agent_attachment
                 (agent_id, filename, mime_type, file_size_bytes, file_data)
             VALUES
                 (:agent_id, :filename, :mime_type, :file_size_bytes, :file_data)
@@ -2047,7 +2014,7 @@ async def download_agent_attachment(
         text(
             """
             SELECT filename, mime_type, file_data
-            FROM public.agent_attachment
+            FROM core.agent_attachment
             WHERE id = :attachment_id
               AND agent_id = :agent_id
             LIMIT 1
@@ -2079,7 +2046,7 @@ async def delete_agent_attachment(
     result = await db.execute(
         text(
             """
-            DELETE FROM public.agent_attachment
+            DELETE FROM core.agent_attachment
             WHERE id = :attachment_id
               AND agent_id = :agent_id
             """

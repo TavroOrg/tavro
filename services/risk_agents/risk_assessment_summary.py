@@ -17,7 +17,7 @@ def _table(schema_name: str, table_name: str) -> sql.Composed:
 # ---------------------------------------------------------------------------
 
 def get_agent_core_info(cursor, agent_internal_id: str) -> list[dict]:
-    query = sql.SQL("SELECT * FROM {table} WHERE agent_internal_id = %s").format(
+    query = sql.SQL("SELECT * FROM {table} WHERE agent_id = %s").format(
         table=_table(CORE_SCHEMA, "agents")
     )
     cursor.execute(query, (agent_internal_id,))
@@ -25,7 +25,7 @@ def get_agent_core_info(cursor, agent_internal_id: str) -> list[dict]:
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 def get_agent_risk_assessments_core(cursor, agent_internal_id: str) -> list[dict]:
-    query = sql.SQL("SELECT * FROM {table} WHERE agent_internal_id = %s").format(
+    query = sql.SQL("SELECT * FROM {table} WHERE agent_id = %s").format(
         table=_table(CORE_SCHEMA, "agent_risk_assessments")
     )
     cursor.execute(query, (agent_internal_id,))
@@ -33,7 +33,7 @@ def get_agent_risk_assessments_core(cursor, agent_internal_id: str) -> list[dict
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 def get_agent_risk_assessment_detail(cursor, agent_internal_id: str, assessment_id: str) -> list[dict]:
-    query = sql.SQL("SELECT * FROM {table} WHERE agent_internal_id = %s AND assessment_id = %s").format(
+    query = sql.SQL("SELECT * FROM {table} WHERE agent_id = %s AND assessment_id = %s").format(
         table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment")
     )
     cursor.execute(query, (agent_internal_id, assessment_id))

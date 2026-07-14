@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS core.business_processes (
-    tenant_id TEXT,
+    tenant_id TEXT NOT NULL,
     business_process_id TEXT,
     process_number TEXT,
     process_name TEXT,
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS core.business_processes (
     inherent_risk_classification_score DOUBLE PRECISION,
     sla TEXT,
     process_health_state TEXT,
-    company_id TEXT,
+    company_id TEXT NOT NULL,
     company_name TEXT,
     tags JSONB DEFAULT '[]'::jsonb,
     sensitive BOOLEAN DEFAULT FALSE,
@@ -30,5 +30,8 @@ CREATE TABLE IF NOT EXISTS core.business_processes (
     valid_from TIMESTAMP,
     valid_to TIMESTAMP,
     created_ts TIMESTAMP,
-    updated_ts TIMESTAMP
+    updated_ts TIMESTAMP,
+    CONSTRAINT chk_business_processes_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
+    CONSTRAINT chk_business_processes_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> ''),
+    CONSTRAINT pk_core_business_processes PRIMARY KEY (tenant_id, company_id, business_process_id)
 );

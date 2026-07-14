@@ -201,7 +201,6 @@ def _execute_insert(
         """
         INSERT INTO {risk_table} (
             assessment_id,
-            agent_internal_id,
             agent_id,
             tenant_id,
             company_id,
@@ -234,7 +233,7 @@ def _execute_insert(
             state
         )
         VALUES (
-            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s,
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s,
@@ -251,7 +250,6 @@ def _execute_insert(
         insert_query,
         (
             assessment_id,
-            response_data["agent_internal_id"],
             response_data["agent_id"],
             tenant_id,
             company_id,
@@ -288,7 +286,6 @@ def _execute_insert(
     )
     print(cursor.mogrify(insert_query, (
         assessment_id,
-        response_data["agent_internal_id"],
         response_data["agent_id"],
         tenant_id,
         company_id,
@@ -366,7 +363,7 @@ def insert_or_update_into_postgres(response_data: dict, tenant_id: str = None) -
         with _db_connection() as _conn:
             with _conn.cursor() as _cur:
                 _cur.execute(
-                    sql.SQL("SELECT company_id FROM {agents} WHERE agent_internal_id = %s AND is_current = TRUE LIMIT 1").format(
+                    sql.SQL("SELECT company_id FROM {agents} WHERE agent_id = %s AND is_current = TRUE LIMIT 1").format(
                         agents=_table(CORE_SCHEMA, "agents")
                     ),
                     (agent_internal_id,),
@@ -389,7 +386,7 @@ def insert_or_update_into_postgres(response_data: dict, tenant_id: str = None) -
                 """
                 SELECT assessment_id, state
                 FROM {risk_table}
-                WHERE agent_internal_id = %s
+                WHERE agent_id = %s
                   AND state = ANY(%s)
                   AND (%s IS NULL OR tenant_id = %s)
                 ORDER BY
@@ -1014,7 +1011,7 @@ def update_cvss_for_assessment(
             risk_type_query = sql.SQL("""
                 SELECT COUNT(*)
                 FROM {risk_table}
-                WHERE agent_internal_id = %s
+                WHERE agent_id = %s
                   AND assessment_id != %s
                   AND (%s IS NULL OR tenant_id = %s)
             """).format(
@@ -1131,12 +1128,12 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                    ba.emergency_tier
             FROM {link} lnk
             JOIN {ba} ba USING (business_application_id)
-            WHERE lnk.agent_id = %s OR lnk.agent_internal_id = %s
+            WHERE lnk.agent_id = %s
         """).format(
             link=sql.Identifier(CORE_SCHEMA, "agent_business_applications"),
             ba=sql.Identifier(CORE_SCHEMA, "business_applications"),
         ),
-        (agent_id, agent_internal_id),
+        (agent_id,),
     )
     for row in cursor.fetchall():
         app_id, bc_raw, et_raw = row
@@ -1153,7 +1150,7 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                 SELECT brs.agent_internal_id, brs.blended_risk_score
                 FROM {link} lnk
                 JOIN LATERAL (
-                    SELECT ara.agent_internal_id, ara.blended_risk_score
+                    SELECT ara.agent_id AS agent_internal_id, ara.blended_risk_score
                     FROM {ara} ara
                     WHERE ara.agent_id = lnk.agent_id
                       AND ara.blended_risk_score IS NOT NULL
@@ -1184,7 +1181,7 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                 sql.SQL("""
                     SELECT type_of_risk, risk_classification, risk_classification_score
                     FROM {risk_table}
-                    WHERE agent_internal_id = %s
+                    WHERE agent_id = %s
                       AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                     ORDER BY created_ts DESC
                 """).format(risk_table=sql.Identifier(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment")),
@@ -1224,12 +1221,12 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                    bp.regulatory_impact
             FROM {link} lnk
             JOIN {bp} bp USING (business_process_id)
-            WHERE lnk.agent_id = %s OR lnk.agent_internal_id = %s
+            WHERE lnk.agent_id = %s
         """).format(
             link=sql.Identifier(CORE_SCHEMA, "agent_business_processes"),
             bp=sql.Identifier(CORE_SCHEMA, "business_processes"),
         ),
-        (agent_id, agent_internal_id),
+        (agent_id,),
     )
     for row in cursor.fetchall():
         proc_id, bc_raw, fi_raw, ri_raw, rgi_raw = row
@@ -1270,7 +1267,7 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                 SELECT brs.agent_internal_id, brs.blended_risk_score
                 FROM {link} lnk
                 JOIN LATERAL (
-                    SELECT ara.agent_internal_id, ara.blended_risk_score
+                    SELECT ara.agent_id AS agent_internal_id, ara.blended_risk_score
                     FROM {ara} ara
                     WHERE ara.agent_id = lnk.agent_id
                       AND ara.blended_risk_score IS NOT NULL
@@ -1301,7 +1298,7 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                 sql.SQL("""
                     SELECT type_of_risk, risk_classification, risk_classification_score
                     FROM {risk_table}
-                    WHERE agent_internal_id = %s
+                    WHERE agent_id = %s
                       AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                     ORDER BY created_ts DESC
                 """).format(risk_table=sql.Identifier(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment")),
@@ -1336,9 +1333,9 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
         sql.SQL("""
             SELECT DISTINCT ai_use_case_id
             FROM {link}
-            WHERE agent_id = %s OR agent_internal_id = %s
+            WHERE agent_id = %s
         """).format(link=sql.Identifier(CORE_SCHEMA, "agent_ai_use_cases")),
-        (agent_id, agent_internal_id),
+        (agent_id,),
     )
     for row in cursor.fetchall():
         use_case_id = row[0]
@@ -1360,17 +1357,10 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                 SELECT brs.agent_internal_id, brs.blended_risk_score
                 FROM {link} lnk
                 JOIN LATERAL (
-                    SELECT ara.agent_internal_id, ara.blended_risk_score
+                    SELECT ara.agent_id AS agent_internal_id, ara.blended_risk_score
                     FROM {ara} ara
                     WHERE ara.blended_risk_score IS NOT NULL
-                      AND (
-                        ara.agent_id = lnk.agent_id
-                        OR (
-                            lnk.agent_internal_id IS NOT NULL
-                            AND lnk.agent_internal_id <> ''
-                            AND ara.agent_internal_id = lnk.agent_internal_id
-                        )
-                      )
+                      AND ara.agent_id = lnk.agent_id
                     ORDER BY
                         CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
                         ara.assessment_ts DESC NULLS LAST,
@@ -1398,7 +1388,7 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                 sql.SQL("""
                     SELECT type_of_risk, risk_classification, risk_classification_score
                     FROM {risk_table}
-                    WHERE agent_internal_id = %s
+                    WHERE agent_id = %s
                       AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                     ORDER BY created_ts DESC
                 """).format(risk_table=sql.Identifier(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment")),
@@ -1435,12 +1425,12 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
             SELECT DISTINCT ai_model_id, business_criticality, emergency_tier
             FROM {link} lnk
             JOIN {am} am USING (ai_model_id)
-            WHERE lnk.agent_id = %s OR lnk.agent_internal_id = %s
+            WHERE lnk.agent_id = %s
         """).format(
             link=sql.Identifier(CORE_SCHEMA, "agent_ai_models"),
             am=sql.Identifier(CORE_SCHEMA, "ai_models"),
         ),
-        (agent_id, agent_internal_id),
+        (agent_id,),
     )
     for row in cursor.fetchall():
         model_id, bc_raw, et_raw = row
@@ -1469,17 +1459,10 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                 SELECT brs.agent_internal_id, brs.blended_risk_score
                 FROM {link} lnk
                 JOIN LATERAL (
-                    SELECT ara.agent_internal_id, ara.blended_risk_score
+                    SELECT ara.agent_id AS agent_internal_id, ara.blended_risk_score
                     FROM {ara} ara
                     WHERE ara.blended_risk_score IS NOT NULL
-                      AND (
-                        ara.agent_id = lnk.agent_id
-                        OR (
-                            lnk.agent_internal_id IS NOT NULL
-                            AND lnk.agent_internal_id <> ''
-                            AND ara.agent_internal_id = lnk.agent_internal_id
-                        )
-                      )
+                      AND ara.agent_id = lnk.agent_id
                     ORDER BY
                         CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
                         ara.assessment_ts DESC NULLS LAST,
@@ -1507,7 +1490,7 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                 sql.SQL("""
                     SELECT type_of_risk, risk_classification, risk_classification_score
                     FROM {risk_table}
-                    WHERE agent_internal_id = %s
+                    WHERE agent_id = %s
                       AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                     ORDER BY created_ts DESC
                 """).format(risk_table=sql.Identifier(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment")),
@@ -1546,12 +1529,12 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                    bi.emergency_tier
             FROM {link} lnk
             JOIN {bi} bi USING (integration_id)
-            WHERE lnk.agent_id = %s OR lnk.agent_internal_id = %s
+            WHERE lnk.agent_id = %s
         """).format(
             link=sql.Identifier(CORE_SCHEMA, "agent_business_integrations"),
             bi=sql.Identifier(CORE_SCHEMA, "business_integrations"),
         ),
-        (agent_id, agent_internal_id),
+        (agent_id,),
     )
     for row in cursor.fetchall():
         integration_id, bc_raw, et_raw = row
@@ -1580,17 +1563,10 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                 SELECT brs.agent_internal_id, brs.blended_risk_score
                 FROM {link} lnk
                 JOIN LATERAL (
-                    SELECT ara.agent_internal_id, ara.blended_risk_score
+                    SELECT ara.agent_id AS agent_internal_id, ara.blended_risk_score
                     FROM {ara} ara
                     WHERE ara.blended_risk_score IS NOT NULL
-                      AND (
-                        ara.agent_id = lnk.agent_id
-                        OR (
-                            lnk.agent_internal_id IS NOT NULL
-                            AND lnk.agent_internal_id <> ''
-                            AND ara.agent_internal_id = lnk.agent_internal_id
-                        )
-                      )
+                      AND ara.agent_id = lnk.agent_id
                     ORDER BY
                         CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
                         ara.assessment_ts DESC NULLS LAST,
@@ -1618,7 +1594,7 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                 sql.SQL("""
                     SELECT type_of_risk, risk_classification, risk_classification_score
                     FROM {risk_table}
-                    WHERE agent_internal_id = %s
+                    WHERE agent_id = %s
                       AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                     ORDER BY created_ts DESC
                 """).format(risk_table=sql.Identifier(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment")),
@@ -1704,7 +1680,6 @@ def insert_core_risk_assessment(
 
             values = (
                 risk_assessment_id,
-                agent_internal_id,
                 agent_id,
                 tenant_id,
                 company_id,
@@ -1727,7 +1702,6 @@ def insert_core_risk_assessment(
                 """
                 UPDATE {core_table}
                 SET
-                    agent_internal_id = %s,
                     agent_id = %s,
                     tenant_id = %s,
                     company_id = %s,
@@ -1749,7 +1723,6 @@ def insert_core_risk_assessment(
             ).format(core_table=_table(CORE_SCHEMA, "agent_risk_assessments"))
 
             update_values = (
-                agent_internal_id,
                 agent_id,
                 tenant_id,
                 company_id,
@@ -1780,7 +1753,6 @@ def insert_core_risk_assessment(
                     """
                     INSERT INTO {core_table} (
                         risk_assessment_id,
-                        agent_internal_id,
                         agent_id,
                         tenant_id,
                         company_id,
@@ -1798,7 +1770,7 @@ def insert_core_risk_assessment(
                         created_ts,
                         updated_ts
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """
                 ).format(core_table=_table(CORE_SCHEMA, "agent_risk_assessments"))
 
@@ -1848,7 +1820,7 @@ def update_agent_data_sensitivity_flags(
                     contains_phi = %s,
                     contains_pci = %s,
                     updated_ts   = CURRENT_TIMESTAMP
-                WHERE agent_internal_id = %s
+                WHERE agent_id = %s
                   AND (
                         (source_object_type = 'Agent' AND source_object_id = %s)
                         OR
@@ -1909,7 +1881,7 @@ def insert_summary_to_tables(
                 SET
                     summary = %s,
                     updated_ts = CURRENT_TIMESTAMP
-                WHERE agent_internal_id = %s
+                WHERE agent_id = %s
                   AND risk_assessment_id = %s
                   AND (%s IS NULL OR tenant_id = %s)
                 """
@@ -1938,7 +1910,7 @@ def insert_summary_to_tables(
                 SET
                     summary = %s,
                     updated_ts = CURRENT_TIMESTAMP
-                WHERE agent_internal_id = %s
+                WHERE agent_id = %s
                   AND assessment_id = %s
                   AND (%s IS NULL OR tenant_id = %s)
                 """
@@ -1977,12 +1949,12 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str, tenant_id: 
             delete_query = sql.SQL(
                 """
                 DELETE FROM {agent_360_table}
-                WHERE (agent_internal_id = %s OR agent_id = %s)
+                WHERE agent_id = %s
                   AND (%s IS NULL OR tenant_id = %s)
                 """
             ).format(agent_360_table=_table(CURATED_SCHEMA, "agent_360"))
-            print(cursor.mogrify(delete_query, (agent_internal_id, agent_id, tenant_id, tenant_id)).decode())
-            cursor.execute(delete_query, (agent_internal_id, agent_id, tenant_id, tenant_id))
+            print(cursor.mogrify(delete_query, (agent_id, tenant_id, tenant_id)).decode())
+            cursor.execute(delete_query, (agent_id, tenant_id, tenant_id))
             deleted_rows = cursor.rowcount
 
             insert_query = sql.SQL(
@@ -2009,7 +1981,6 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str, tenant_id: 
                     latest_risk_class,
                     latest_event_status,
                     snapshot_ts,
-                    agent_internal_id,
                     summary,
                     company_id
                 )
@@ -2035,48 +2006,47 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str, tenant_id: 
                     COALESCE(risk.blended_risk_class, risk.regulatory_risk_class),
                     latest_event.status,
                     CURRENT_TIMESTAMP,
-                    a.agent_internal_id,
                     risk.summary,
                     a.company_id
                 FROM {agents_table} a
                 LEFT JOIN {config_table} cfg
-                    ON  cfg.agent_internal_id = a.agent_internal_id
+                    ON  cfg.agent_id = a.agent_id
                     AND COALESCE(cfg.is_current, TRUE) = TRUE
                 LEFT JOIN (
-                    SELECT agent_internal_id, COUNT(*)::bigint AS tool_count
+                    SELECT agent_id, COUNT(*)::bigint AS tool_count
                     FROM   {tools_table}
-                    GROUP  BY agent_internal_id
+                    GROUP  BY agent_id
                 ) tools
-                    ON tools.agent_internal_id = a.agent_internal_id
+                    ON tools.agent_id = a.agent_id
                 LEFT JOIN (
                     SELECT
-                        agent_internal_id,
+                        agent_id,
                         COUNT(*)::bigint                          AS data_source_count,
                         BOOL_OR(COALESCE(contains_pii, FALSE))   AS contains_pii,
                         BOOL_OR(COALESCE(contains_phi, FALSE))   AS contains_phi,
                         BOOL_OR(COALESCE(contains_pci, FALSE))   AS contains_pci
                     FROM   {data_sources_table}
-                    GROUP  BY agent_internal_id
+                    GROUP  BY agent_id
                 ) data_sources
-                    ON data_sources.agent_internal_id = a.agent_internal_id
+                    ON data_sources.agent_id = a.agent_id
                 LEFT JOIN (
-                    SELECT agent_internal_id, COUNT(*)::bigint AS business_application_count
+                    SELECT agent_id, COUNT(*)::bigint AS business_application_count
                     FROM   {applications_table}
-                    GROUP  BY agent_internal_id
+                    GROUP  BY agent_id
                 ) apps
-                    ON apps.agent_internal_id = a.agent_internal_id
+                    ON apps.agent_id = a.agent_id
                 LEFT JOIN (
-                    SELECT agent_internal_id, COUNT(*)::bigint AS business_process_count
+                    SELECT agent_id, COUNT(*)::bigint AS business_process_count
                     FROM   {processes_table}
-                    GROUP  BY agent_internal_id
+                    GROUP  BY agent_id
                 ) processes
-                    ON processes.agent_internal_id = a.agent_internal_id
+                    ON processes.agent_id = a.agent_id
                 LEFT JOIN (
-                    SELECT agent_internal_id, COUNT(*)::bigint AS ai_model_count
+                    SELECT agent_id, COUNT(*)::bigint AS ai_model_count
                     FROM   {models_table}
-                    GROUP  BY agent_internal_id
+                    GROUP  BY agent_id
                 ) models
-                    ON models.agent_internal_id = a.agent_internal_id
+                    ON models.agent_id = a.agent_id
                 LEFT JOIN LATERAL (
                     SELECT
                         COALESCE(cat.model_name, rel.model_name) AS model_name,
@@ -2084,7 +2054,7 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str, tenant_id: 
                     FROM   {models_table} rel
                     LEFT JOIN {models_catalog_table} cat
                         ON LOWER(TRIM(cat.ai_model_id)) = LOWER(TRIM(rel.ai_model_id))
-                    WHERE  rel.agent_internal_id = a.agent_internal_id
+                    WHERE  rel.agent_id = a.agent_id
                     ORDER  BY rel.created_ts DESC NULLS LAST
                     LIMIT  1
                 ) primary_model ON TRUE
@@ -2097,7 +2067,7 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str, tenant_id: 
                         state_name,
                         summary
                     FROM   {risk_table} r
-                    WHERE  r.agent_internal_id = a.agent_internal_id
+                    WHERE  r.agent_id = a.agent_id
                     ORDER  BY r.assessment_ts DESC NULLS LAST,
                               r.updated_ts    DESC NULLS LAST
                     LIMIT  1
@@ -2105,12 +2075,12 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str, tenant_id: 
                 LEFT JOIN LATERAL (
                     SELECT status
                     FROM   {governance_events_table} ge
-                    WHERE  ge.agent_internal_id = a.agent_internal_id
+                    WHERE  ge.agent_id = a.agent_id
                     ORDER  BY ge.event_ts    DESC NULLS LAST,
                               ge.created_ts  DESC NULLS LAST
                     LIMIT  1
                 ) latest_event ON TRUE
-                WHERE a.agent_internal_id = %s
+                WHERE a.agent_id = %s
                   AND COALESCE(a.is_current, TRUE) = TRUE
                   AND (%s IS NULL OR a.tenant_id = %s)
                 """
@@ -2127,8 +2097,8 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str, tenant_id: 
                 governance_events_table = _table(CORE_SCHEMA,    "agent_governance_events"),
                 risk_table              = _table(CORE_SCHEMA,    "agent_risk_assessments"),
             )
-            print(cursor.mogrify(insert_query, (agent_internal_id, tenant_id, tenant_id)).decode())
-            cursor.execute(insert_query, (agent_internal_id, tenant_id, tenant_id))
+            print(cursor.mogrify(insert_query, (agent_id, tenant_id, tenant_id)).decode())
+            cursor.execute(insert_query, (agent_id, tenant_id, tenant_id))
             inserted_rows = cursor.rowcount
 
     return {
@@ -2146,7 +2116,7 @@ def _val(row: dict, key: str):
     return value
 
 def _query_core_rows(cursor, table_name: str, agent_internal_id: str):
-    query = sql.SQL("SELECT * FROM {} WHERE agent_internal_id = %s").format(
+    query = sql.SQL("SELECT * FROM {} WHERE agent_id = %s").format(
         _table(CORE_SCHEMA, table_name)
     )
     cursor.execute(query, (agent_internal_id,))
@@ -2167,7 +2137,7 @@ def _query_agent_application_rows(cursor, agent_internal_id: str):
         FROM {} aba
         LEFT JOIN {} ba
             ON ba.business_application_id = aba.business_application_id
-        WHERE aba.agent_internal_id = %s
+        WHERE aba.agent_id = %s
         """
     ).format(
         _table(CORE_SCHEMA, "agent_business_applications"),
@@ -2203,7 +2173,7 @@ def _query_agent_process_rows(cursor, agent_internal_id: str):
                 WHERE child.parent_process_id = abp.business_process_id
             ) rel
         ) rel ON TRUE
-        WHERE abp.agent_internal_id = %s
+        WHERE abp.agent_id = %s
         """
     ).format(
         _table(CORE_SCHEMA, "agent_business_processes"),
@@ -2248,7 +2218,7 @@ def create_local_agent_card(agent_internal_id: str, output_dir: str = None):
             ra_query = sql.SQL(
                 """
                 SELECT * FROM {}
-                WHERE agent_internal_id = %s
+                WHERE agent_id = %s
                 ORDER BY updated_ts DESC NULLS LAST, created_ts DESC NULLS LAST
                 LIMIT 1
                 """

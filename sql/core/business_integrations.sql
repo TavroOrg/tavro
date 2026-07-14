@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.business_integrations (
     integration_id TEXT PRIMARY KEY,
-    tenant_id TEXT,
+    tenant_id TEXT NOT NULL,
     integration_name TEXT,
     integration_description TEXT,
     capabilities TEXT,
@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS core.business_integrations (
     sla TEXT,
     version TEXT,
     parent_application_id TEXT,
-    company_id TEXT,
+    company_id TEXT NOT NULL,
     company_name TEXT,
     tags JSONB DEFAULT '[]'::jsonb,
     business_criticality TEXT,
@@ -33,5 +33,8 @@ CREATE TABLE IF NOT EXISTS core.business_integrations (
     valid_from TIMESTAMP,
     valid_to TIMESTAMP,
     created_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_ts TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_business_integrations_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
+    CONSTRAINT chk_business_integrations_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> ''),
+    CONSTRAINT ux_core_business_integrations_tenant_company UNIQUE (tenant_id, company_id, integration_id)
 );

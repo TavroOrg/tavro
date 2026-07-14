@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS curated.agent_360 (
-    tenant_id TEXT,
-    agent_id TEXT,
+    tenant_id TEXT NOT NULL,
+    agent_source_id TEXT,
     agent_name TEXT,
     agent_description TEXT,
     autonomy_level TEXT,
@@ -20,10 +20,11 @@ CREATE TABLE IF NOT EXISTS curated.agent_360 (
     latest_risk_class TEXT,
     latest_event_status TEXT,
     snapshot_ts timestamp,
-    agent_internal_id TEXT,
+    agent_id TEXT,
     summary TEXT,
-    company_id TEXT,
+    company_id TEXT NOT NULL,
     company_name TEXT,
-    agent_type TEXT DEFAULT 'Config-driven'
+    agent_type TEXT DEFAULT 'Config-driven',
+    CONSTRAINT chk_agent_360_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
+    CONSTRAINT chk_agent_360_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> '')
 );
-

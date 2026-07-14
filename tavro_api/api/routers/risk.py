@@ -186,7 +186,7 @@ async def get_risk_summary(session: AsyncSession, agent_internal_id: str) -> Dic
         SELECT
             summary
         FROM {RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment
-        WHERE agent_internal_id = :iid
+        WHERE agent_id = :iid
         ORDER BY updated_ts DESC
         LIMIT 1
     """
@@ -214,20 +214,20 @@ async def delete_risk_summary(session: AsyncSession, agent_internal_id: str) -> 
         f"""
         UPDATE {CORE_DB_NAME}.agent_risk_assessments
         SET summary = NULL
-        WHERE agent_internal_id = :iid
+        WHERE agent_id = :iid
         """,
 
         f"""
         UPDATE {CURATED_DB_NAME}.agent_360
         SET summary = NULL
-        WHERE agent_internal_id = :iid
+        WHERE agent_id = :iid
         """,
 
         f"""
         UPDATE {RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment
         SET summary = NULL,
             updated_ts = NOW()
-        WHERE agent_internal_id = :iid
+        WHERE agent_id = :iid
         """
     ]
 
@@ -294,7 +294,7 @@ async def update_risk_summary(session: AsyncSession, agent_internal_id: str) -> 
 
     query = f"""
         SELECT
-            a.agent_internal_id,
+            a.agent_id AS agent_internal_id,
             a.agent_id,
             a.agent_name,
             a.agent_description,
@@ -303,10 +303,9 @@ async def update_risk_summary(session: AsyncSession, agent_internal_id: str) -> 
             i.instruction
         FROM {CORE_DB_NAME}.agents a
         LEFT JOIN {CORE_DB_NAME}.agent_identifications i
-            ON a.agent_internal_id = i.agent_internal_id
-            AND a.agent_id = i.agent_id
+            ON a.agent_id = i.agent_id
             AND i.is_current = true
-        WHERE a.agent_internal_id = :iid
+        WHERE a.agent_id = :iid
           AND a.is_current = true
         ORDER BY a.updated_ts DESC
         LIMIT 1

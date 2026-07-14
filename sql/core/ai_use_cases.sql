@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS core.ai_use_cases (
-  tenant_id TEXT,
+  tenant_id TEXT NOT NULL,
   ai_use_case_id TEXT,
   name TEXT,
   description TEXT,
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS core.ai_use_cases (
   inherent_risk_classification_score decimal(10, 2),
   residual_risk_classification_score decimal(10, 2),
   solution_approach TEXT,
-  company_id TEXT,
+  company_id TEXT NOT NULL,
   company_name TEXT,
   assumptions TEXT,
   quantified_financial_benefits TEXT,
@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS core.ai_use_cases (
   time_horizon                          TEXT CHECK (time_horizon IN ('now', 'next', 'later')),
   time_horizon_rationale                TEXT,
   roadmap_approved                      BOOLEAN DEFAULT FALSE,
-  scoring_history                       JSONB DEFAULT '[]'::JSONB
+  scoring_history                       JSONB DEFAULT '[]'::JSONB,
+  CONSTRAINT chk_ai_use_cases_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
+  CONSTRAINT chk_ai_use_cases_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> ''),
+  CONSTRAINT pk_core_ai_use_cases PRIMARY KEY (tenant_id, company_id, ai_use_case_id)
 );
-

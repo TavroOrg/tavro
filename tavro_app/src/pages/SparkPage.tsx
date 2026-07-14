@@ -32,6 +32,7 @@ import { sparkApi } from '../services/sparkApi';
 import { mcpClient } from '../services/mcpClient';
 import { useCaseApi } from '../services/useCaseApi';
 import { portalActivity } from '../services/portalActivity';
+import { appLogger } from '../services/logger';
 import type { SparkIdea } from '../types/spark';
 import {
   SPARK_DIMENSIONS,
@@ -666,7 +667,14 @@ const IdeaModal: React.FC<{
                 localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(filtered));
               } catch { /* best-effort */ }
             }
-          } catch { /* agent creation best-effort */ }
+          } catch (agentErr) {
+            console.error('[Spark] Agent creation failed for use case', useCaseId, agentErr);
+            appLogger.error('Spark agent creation failed (best-effort)', {
+              useCaseId,
+              ideaTitle: idea.title,
+              error: agentErr instanceof Error ? agentErr.message : String(agentErr),
+            });
+          }
 
           // Remove enriching marker
           try {

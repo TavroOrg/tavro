@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.ai_models (
 	-- Identification & Accountability
-	tenant_id TEXT,
+	tenant_id TEXT NOT NULL,
 	ai_model_id TEXT,
 	model_name TEXT,
 	owner TEXT,
@@ -61,9 +61,12 @@ CREATE TABLE IF NOT EXISTS core.ai_models (
 	inherent_risk_classification_score NUMERIC,
 	residual_risk_classification_score NUMERIC,
 	no_of_associated_agents INTEGER,
-	agent_internal_id TEXT,
-	company_id TEXT,
+	agent_id TEXT,
+	company_id TEXT NOT NULL,
 	company_name TEXT,
 	created_ts TIMESTAMP,
-	updated_ts TIMESTAMP
+	updated_ts TIMESTAMP,
+	CONSTRAINT chk_ai_models_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
+	CONSTRAINT chk_ai_models_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> ''),
+	CONSTRAINT ux_core_ai_models_tenant_company UNIQUE (tenant_id, company_id, ai_model_id)
 );

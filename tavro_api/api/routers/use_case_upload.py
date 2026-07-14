@@ -280,14 +280,15 @@ async def upload_use_cases(
                     await db.execute(
                         text(f"""
                             INSERT INTO {CORE}.business_processes
-                                (tenant_id, business_process_id, process_name, process_description,
+                                (tenant_id, company_id, business_process_id, process_name, process_description,
                                  business_criticality, created_ts, updated_ts)
                             VALUES
-                                (:tid, :pid, :pname, :pdesc, :bcrit,
+                                (:tid, :cid, :pid, :pname, :pdesc, :bcrit,
                                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         """),
                         {
                             "tid": tenant_id,
+                            "cid": cid,
                             "pid": proc_id,
                             "pname": proc_name or proc_id,
                             "pdesc": proc.get("description") or None,
@@ -308,13 +309,13 @@ async def upload_use_cases(
                     await db.execute(
                         text(f"""
                             INSERT INTO {CORE}.ai_use_case_business_processes
-                                (tenant_id, ai_use_case_id, business_process_id, process_name,
+                                (tenant_id, company_id, ai_use_case_id, business_process_id, process_name,
                                  created_ts, updated_ts)
                             VALUES
-                                (:tid, :uid, :pid, :pname,
+                                (:tid, :cid, :uid, :pid, :pname,
                                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         """),
-                        {"tid": tenant_id, "uid": use_case_id, "pid": proc_id, "pname": proc_name or proc_id},
+                        {"tid": tenant_id, "cid": cid, "uid": use_case_id, "pid": proc_id, "pname": proc_name or proc_id},
                     )
 
             await db.commit()

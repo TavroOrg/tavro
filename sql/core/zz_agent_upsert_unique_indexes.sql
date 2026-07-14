@@ -1,38 +1,65 @@
+-- BUG FIX: this index was originally global (agent_id, agent_name), with no
+-- tenant_id/company_id scope — that made "current" agent identity unique
+-- across the ENTIRE database, not per tenant. Copying an agent from one
+-- tenant to another (same agent_id, same is_current=true) violated the
+-- index even though the destination is a different tenant/company
+-- entirely. Fixed to scope uniqueness to (tenant_id, company_id, agent_id).
+-- The guard below detects and repairs an already-existing global-shaped
+-- index on a live database; on a fresh install the CREATE UNIQUE INDEX
+-- below just builds the correct shape directly.
+--
+-- NO EXCEPTION HANDLER around the DROP, deliberately — see
+-- audit_db/02_fix_agents_current_index_tenant_scope.sql for why: catching
+-- everything here silently swallowed real DROP failures (transient lock
+-- contention), leaving the legacy index in place while still reporting
+-- success. The IF EXISTS check already makes this safe to re-run.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'core' AND indexname = 'ux_core_agents_current'
+          AND indexdef NOT LIKE '%tenant_id%'
+    ) THEN
+        DROP INDEX core.ux_core_agents_current;
+        RAISE NOTICE 'Dropped legacy global-scope ux_core_agents_current index';
+    END IF;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agents_current
-ON core.agents (agent_id, agent_name)
+ON core.agents (tenant_id, company_id, agent_id)
 WHERE is_current = true;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_generated_code
 ON core.agent_generated_code (agent_id, filename);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agents_internal_id
-ON core.agents (agent_internal_id);
+ON core.agents (agent_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_configurations_current
-ON core.agent_configurations (agent_internal_id)
+ON core.agent_configurations (agent_id)
 WHERE is_current = true;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_identifications_current
-ON core.agent_identifications (agent_internal_id)
+ON core.agent_identifications (agent_id)
 WHERE is_current = true;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_tools
 ON core.tools (tool_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_tools
-ON core.agent_tools (agent_internal_id, tool_id);
+ON core.agent_tools (agent_id, tool_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_controls
-ON core.agent_controls (agent_internal_id, name);
+ON core.agent_controls (agent_id, name);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_knowledge_sources
-ON core.agent_knowledge_sources (agent_internal_id);
+ON core.agent_knowledge_sources (agent_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_llm_models
-ON core.agent_llm_models (agent_internal_id, name);
+ON core.agent_llm_models (agent_id, name);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_business_processes
-ON core.agent_business_processes (agent_internal_id, business_process_id);
+ON core.agent_business_processes (agent_id, business_process_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS playground_session_agent_idx
     ON core.playground_session (agent_id);
@@ -41,31 +68,31 @@ CREATE UNIQUE INDEX IF NOT EXISTS playground_session_status_updated_idx
     ON core.playground_session (status, updated_at DESC);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_business_applications
-ON core.agent_business_applications (agent_internal_id, business_application_id);
+ON core.agent_business_applications (agent_id, business_application_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_business_integrations
-ON core.agent_business_integrations (agent_internal_id, integration_id);
+ON core.agent_business_integrations (agent_id, integration_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_guardrails
-ON core.agent_guardrails (agent_internal_id, name);
+ON core.agent_guardrails (agent_id, name);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_mcp_servers
-ON core.agent_mcp_servers (agent_internal_id);
+ON core.agent_mcp_servers (agent_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_memories
-ON core.agent_memories (agent_internal_id);
+ON core.agent_memories (agent_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_physical_ai
-ON core.agent_physical_ai (agent_internal_id, name);
+ON core.agent_physical_ai (agent_id, name);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_prompt_templates
-ON core.agent_prompt_templates (agent_internal_id);
+ON core.agent_prompt_templates (agent_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_regulations_or_frameworks
-ON core.agent_regulations_or_frameworks (agent_internal_id);
+ON core.agent_regulations_or_frameworks (agent_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_ai_models
-ON core.agent_ai_models (agent_internal_id, ai_model_id);
+ON core.agent_ai_models (agent_id, ai_model_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_models
 ON core.ai_models (ai_model_id);
@@ -83,13 +110,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_process_business_applications
 ON core.business_process_business_applications (business_process_id, business_application_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_data_sources
-ON core.agent_data_sources (agent_internal_id, source_object_id, target_object_id);
+ON core.agent_data_sources (agent_id, source_object_id, target_object_id);
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_applications
-ON core.business_applications (tenant_id, company_id, business_application_id);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_processes
-ON core.business_processes (tenant_id, company_id, business_process_id);
+-- ux_core_business_applications / ux_core_business_processes removed:
+-- both tables now declare their composite PK inline in
+-- sql/core/business_applications.sql / business_processes.sql. On an
+-- already-existing production database, audit_db/03_critical_tenant_and_composite_pk.sql
+-- still promotes whatever unique index is already there under those names.
 
 -- ux_core_columns removed: column_id is now the PRIMARY KEY
 
@@ -127,14 +154,13 @@ BEGIN
         THEN
             EXECUTE '
                 INSERT INTO core.agent_tables (
-                    tenant_id, agent_id, agent_name, agent_internal_id,
+                    tenant_id, agent_id, agent_name,
                     table_id, table_name, created_ts, updated_ts
                 )
                 SELECT
                     t.tenant_id,
                     t.agent_id,
                     ag.agent_name,
-                    t.agent_internal_id,
                     t.table_id,
                     t.name,
                     COALESCE(t.created_ts, CURRENT_TIMESTAMP),
@@ -142,12 +168,10 @@ BEGIN
                 FROM core.tables t
                 LEFT JOIN core.agents ag
                   ON ag.agent_id = t.agent_id
-                 AND ag.agent_internal_id = t.agent_internal_id
                 WHERE t.agent_id IS NOT NULL
                   AND t.agent_id <> ''''
                 ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET
                     agent_name = COALESCE(EXCLUDED.agent_name, core.agent_tables.agent_name),
-                    agent_internal_id = EXCLUDED.agent_internal_id,
                     table_name = COALESCE(EXCLUDED.table_name, core.agent_tables.table_name),
                     updated_ts = EXCLUDED.updated_ts
             ';
@@ -175,7 +199,7 @@ BEGIN
                 FROM core.tables t
                 LEFT JOIN core.agent_tools at
                   ON at.tool_id = t.tool_id
-                 AND at.agent_internal_id = t.agent_internal_id
+                 AND at.agent_id = t.agent_id
                 WHERE t.tool_id IS NOT NULL
                   AND t.tool_id <> ''''
                 ON CONFLICT (tenant_id, tool_id, table_id) DO UPDATE SET
@@ -194,9 +218,9 @@ BEGIN
             END IF;
             IF EXISTS (
                 SELECT 1 FROM information_schema.columns
-                WHERE table_schema = 'core' AND table_name = 'tool_tables' AND column_name = 'agent_internal_id'
+                WHERE table_schema = 'core' AND table_name = 'tool_tables' AND column_name = 'agent_id'
             ) THEN
-                ALTER TABLE core.tool_tables DROP COLUMN agent_internal_id;
+                ALTER TABLE core.tool_tables DROP COLUMN agent_id;
             END IF;
         END IF;
 
@@ -277,7 +301,7 @@ BEGIN
             INSERT INTO core.ai_use_cases (
                 tenant_id, ai_use_case_id, name, description, proposed_by, owner, function,
                 problem_statement, expected_benefits, priority, status,
-                created_ts, updated_ts, agent_internal_id,
+                created_ts, updated_ts, agent_id,
                 agent_risk_exposure_are, no_of_associated_agents,
                 inherent_risk_classification, residual_risk_classification,
                 agent_risk_tier_art, blended_risk_score,
@@ -287,7 +311,7 @@ BEGIN
             SELECT DISTINCT ON (tenant_id, identifier)
                 tenant_id, identifier, name, description, proposed_by, owner, function,
                 problem_statement, expected_benefits, priority, status,
-                created_ts, updated_ts, agent_internal_id,
+                created_ts, updated_ts, agent_id,
                 agent_risk_exposure_are, no_of_associated_agents,
                 inherent_risk_classification, residual_risk_classification,
                 agent_risk_tier_art, blended_risk_score,
@@ -309,7 +333,7 @@ BEGIN
                 priority = EXCLUDED.priority,
                 status = EXCLUDED.status,
                 updated_ts = EXCLUDED.updated_ts,
-                agent_internal_id = EXCLUDED.agent_internal_id,
+                agent_id = EXCLUDED.agent_id,
                 agent_risk_exposure_are = EXCLUDED.agent_risk_exposure_are,
                 no_of_associated_agents = EXCLUDED.no_of_associated_agents,
                 inherent_risk_classification = EXCLUDED.inherent_risk_classification,
@@ -421,11 +445,11 @@ BEGIN
         EXECUTE $ddl$
         CREATE OR REPLACE FUNCTION core.populate_tenant_from_agent() RETURNS trigger AS $func$
         BEGIN
-            -- For rows that include agent_internal_id, prefer that lookup
+            -- For rows that include agent_id, prefer that lookup
             IF NEW.tenant_id IS NULL OR NEW.tenant_id = '' THEN
                 IF TG_TABLE_NAME = 'agent_tools' THEN
-                    IF NEW.agent_internal_id IS NOT NULL THEN
-                        SELECT tenant_id INTO NEW.tenant_id FROM core.agents WHERE agent_internal_id = NEW.agent_internal_id LIMIT 1;
+                    IF NEW.agent_id IS NOT NULL THEN
+                        SELECT tenant_id INTO NEW.tenant_id FROM core.agents WHERE agent_id = NEW.agent_id LIMIT 1;
                     END IF;
                 END IF;
             END IF;
@@ -514,9 +538,9 @@ BEGIN
         ALTER TABLE core.tables DROP CONSTRAINT IF EXISTS fk_core_tables_agent;
         IF EXISTS (
             SELECT 1 FROM information_schema.columns
-            WHERE table_schema = 'core' AND table_name = 'tables' AND column_name = 'agent_internal_id'
+            WHERE table_schema = 'core' AND table_name = 'tables' AND column_name = 'agent_id'
         ) THEN
-            ALTER TABLE core.tables DROP COLUMN agent_internal_id;
+            ALTER TABLE core.tables DROP COLUMN agent_id;
         END IF;
     END IF;
     -- Migrate agent_tools master data into core.tools (idempotent: guarded by presence of tool_description column)
@@ -635,19 +659,19 @@ BEGIN
 
     -- Agent-to-agent (parent/child) self-reference on core.agents.
     -- Mirrors business_processes.parent_process_id. No FK is added because
-    -- core.agents is versioned (agent_internal_id is not unique), so it cannot
+    -- core.agents is versioned (agent_id is not unique), so it cannot
     -- be used as a foreign-key target.
     IF to_regclass('core.agents') IS NOT NULL THEN
         IF NOT EXISTS (
             SELECT 1 FROM information_schema.columns
             WHERE table_schema = 'core' AND table_name = 'agents'
-              AND column_name = 'parent_agent_internal_id'
+              AND column_name = 'parent_agent_id'
         ) THEN
-            ALTER TABLE core.agents ADD COLUMN parent_agent_internal_id TEXT;
+            ALTER TABLE core.agents ADD COLUMN parent_agent_id TEXT;
         END IF;
 
         CREATE INDEX IF NOT EXISTS ix_core_agents_parent_internal_id
-        ON core.agents (parent_agent_internal_id);
+        ON core.agents (parent_agent_id);
     END IF;
     IF to_regclass('core.spark_ideas') IS NOT NULL THEN
         IF NOT EXISTS (

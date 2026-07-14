@@ -409,11 +409,18 @@ async def _resolve_agent_identifiers(
     if not agent_id:
         return None, None
     try:
+        # No tenant is known yet at this call site — this is the fallback
+        # path specifically for resolving it. agent_id is no longer
+        # globally unique (ux_core_agents_current is now tenant/company
+        # scoped), so if the same agent_id exists as "current" in more
+        # than one tenant, this deliberately picks the most recently
+        # updated one rather than an arbitrary row.
         row = await db.execute(
             text("""
-                SELECT tenant_id, company_id, agent_internal_id
+                SELECT tenant_id, company_id, agent_id AS agent_internal_id
                 FROM core.agents
                 WHERE agent_id = :aid AND is_current = true
+                ORDER BY updated_ts DESC
                 LIMIT 1
             """),
             {"aid": agent_id},
@@ -1837,12 +1844,12 @@ async def _db_upsert_session(session: dict, db: AsyncSession) -> None:
         await db.execute(
             text("""
                 INSERT INTO core.playground_session
-                    (session_id, tenant_id, company_id, agent_internal_id, agent_id,
+                    (session_id, tenant_id, company_id, agent_id,
                      agent_name, provider, model,
                      interactions, token_total, summary, observations,
                      status, created_at, updated_at, ended_at)
                 VALUES
-                    (:session_id, :tenant_id, :company_id, :agent_internal_id, :agent_id,
+                    (:session_id, :tenant_id, :company_id, :agent_id,
                      :agent_name, :provider, :model,
                      CAST(:interactions AS jsonb), :token_total,
                      CAST(:summary AS jsonb), CAST(:observations AS jsonb),
@@ -1860,7 +1867,6 @@ async def _db_upsert_session(session: dict, db: AsyncSession) -> None:
                 "session_id":        session["session_id"],
                 "tenant_id":         session.get("tenant_id") or config.get("tenant_id"),
                 "company_id":        session.get("company_id") or config.get("company_id"),
-                "agent_internal_id": session.get("agent_internal_id"),
                 "agent_id":          session.get("agent_id"),
                 "agent_name":        config.get("agent_name"),
                 "provider":          config.get("provider"),

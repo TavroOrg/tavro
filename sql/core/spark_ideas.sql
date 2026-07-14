@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS core.spark_ideas (
-    idea_id           TEXT PRIMARY KEY,
+    idea_id           TEXT NOT NULL,
     company_id        TEXT NOT NULL,
-    tenant_id         TEXT,
+    tenant_id         TEXT NOT NULL,
     title             TEXT NOT NULL,
     description       TEXT,
     rationale         TEXT,
@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS core.spark_ideas (
     user_reaction     TEXT,
     popularity_score  INTEGER NOT NULL DEFAULT 0,
     created_at        TIMESTAMPTZ DEFAULT NOW(),
-    updated_at        TIMESTAMPTZ DEFAULT NOW()
+    updated_at        TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT chk_spark_ideas_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
+    CONSTRAINT chk_spark_ideas_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> ''),
+    CONSTRAINT pk_core_spark_ideas PRIMARY KEY (tenant_id, company_id, idea_id)
 );
-

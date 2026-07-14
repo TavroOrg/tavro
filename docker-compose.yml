@@ -44,7 +44,7 @@ services:
       retries: 5
       start_period: 30s
 
-  #embed datahub/datahub.json into twin.datahub_context (global) ──
+  # #embed datahub/datahub.json into twin.datahub_context (global) ──
   datahub-vector-ingest:
     build:
       context: .

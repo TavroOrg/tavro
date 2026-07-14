@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS risk_management.agent_risk_scenarios (
-  tenant_id TEXT,
-  company_id TEXT,
+  tenant_id TEXT NOT NULL,
+  company_id TEXT NOT NULL,
   risk_scenario_id TEXT,
   assessment_id TEXT,
   attack_complexity_ac TEXT,
@@ -22,5 +22,7 @@ CREATE TABLE IF NOT EXISTS risk_management.agent_risk_scenarios (
   updated_by TEXT,
   threat_multiplier DECIMAL(10, 2),
   cvss_score DECIMAL(10, 2),
-  aivss_score DECIMAL(10, 2)
+  aivss_score DECIMAL(10, 2),
+  CONSTRAINT chk_agent_risk_scenarios_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
+  CONSTRAINT chk_agent_risk_scenarios_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> '')
 );

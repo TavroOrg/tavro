@@ -527,8 +527,8 @@ async def _upsert_dim_node_for_entity(
         default_visibility, default_sensitive = await get_company_node_defaults(db, company_id)
 
         # Build INSERT; include entity_id column when provided
-        ins_cols = "company_id, dim_type_id, label, summary, tags, visibility, sensitive"
-        ins_vals = ":company_id, :dim_type_id, :label, :summary, cast(:tags as jsonb), :visibility, :sensitive"
+        ins_cols = "tenant_id, company_id, dim_type_id, label, summary, tags, visibility, sensitive"
+        ins_vals = "(SELECT tenant_id FROM twin.company WHERE id = :company_id), :company_id, :dim_type_id, :label, :summary, cast(:tags as jsonb), :visibility, :sensitive"
         ins_params: dict = {
             "company_id": company_id,
             "dim_type_id": dim_type_id,
@@ -1011,32 +1011,9 @@ async def _ensure_agent_attachments_table(db: AsyncSession) -> None:
     global _AGENT_ATTACHMENTS_READY
     if _AGENT_ATTACHMENTS_READY:
         return
-
-    await db.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS public.agent_attachment (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                agent_id TEXT NOT NULL,
-                filename TEXT NOT NULL,
-                mime_type TEXT,
-                file_size_bytes INT NOT NULL,
-                file_data BYTEA NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-    )
-    await db.execute(
-        text(
-            """
-            CREATE INDEX IF NOT EXISTS agent_attachment_agent_idx
-            ON public.agent_attachment (agent_id, created_at DESC)
-            """
-        )
-    )
-    await db.commit()
+    # Table is defined in sql/core/agent_attachment.sql, created by
+    # tavro-api's init_tables.py on every app startup. We only warm the
+    # ready-flag here so callers below use the real core.agent_attachment.
     _AGENT_ATTACHMENTS_READY = True
 
 async def _suggest_single_description(name: str, system_prompt: str, label: str) -> str:
@@ -1072,32 +1049,9 @@ async def _ensure_application_attachments_table(db: AsyncSession) -> None:
     global _APPLICATION_ATTACHMENTS_READY
     if _APPLICATION_ATTACHMENTS_READY:
         return
-
-    await db.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS public.application_attachment (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                application_id TEXT NOT NULL,
-                filename TEXT NOT NULL,
-                mime_type TEXT,
-                file_size_bytes INT NOT NULL,
-                file_data BYTEA NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-    )
-    await db.execute(
-        text(
-            """
-            CREATE INDEX IF NOT EXISTS application_attachment_application_idx
-            ON public.application_attachment (application_id, created_at DESC)
-            """
-        )
-    )
-    await db.commit()
+    # Table is defined in sql/core/zz_application_attachment.sql, created by
+    # tavro-api's init_tables.py on every app startup. We only warm the
+    # ready-flag here so callers below use the real core.application_attachment.
     _APPLICATION_ATTACHMENTS_READY = True
 
 
@@ -1105,32 +1059,9 @@ async def _ensure_process_attachments_table(db: AsyncSession) -> None:
     global _PROCESS_ATTACHMENTS_READY
     if _PROCESS_ATTACHMENTS_READY:
         return
-
-    await db.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS public.process_attachment (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                process_id TEXT NOT NULL,
-                filename TEXT NOT NULL,
-                mime_type TEXT,
-                file_size_bytes INT NOT NULL,
-                file_data BYTEA NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-    )
-    await db.execute(
-        text(
-            """
-            CREATE INDEX IF NOT EXISTS process_attachment_process_idx
-            ON public.process_attachment (process_id, created_at DESC)
-            """
-        )
-    )
-    await db.commit()
+    # Table is defined in sql/core/process_attachment.sql, created by
+    # tavro-api's init_tables.py on every app startup. We only warm the
+    # ready-flag here so callers below use the real core.process_attachment.
     _PROCESS_ATTACHMENTS_READY = True
 
 
@@ -1138,32 +1069,9 @@ async def _ensure_integration_attachments_table(db: AsyncSession) -> None:
     global _INTEGRATION_ATTACHMENTS_READY
     if _INTEGRATION_ATTACHMENTS_READY:
         return
-
-    await db.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS public.integration_attachment (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                integration_id TEXT NOT NULL,
-                filename TEXT NOT NULL,
-                mime_type TEXT,
-                file_size_bytes INT NOT NULL,
-                file_data BYTEA NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-    )
-    await db.execute(
-        text(
-            """
-            CREATE INDEX IF NOT EXISTS integration_attachment_integration_idx
-            ON public.integration_attachment (integration_id, created_at DESC)
-            """
-        )
-    )
-    await db.commit()
+    # Table is defined in sql/core/integration_attachment.sql, created by
+    # tavro-api's init_tables.py on every app startup. We only warm the
+    # ready-flag here so callers below use the real core.integration_attachment.
     _INTEGRATION_ATTACHMENTS_READY = True
 
 
@@ -1493,9 +1401,7 @@ async def _resolve_agent(db: AsyncSession, agent_id: str) -> dict[str, Any]:
     if not order_parts:
         order_parts.append("1")
 
-    select_agent_internal_id = (
-        "agent_internal_id" if "agent_internal_id" in agent_cols else "NULL AS agent_internal_id"
-    )
+    select_agent_internal_id = "agent_id AS agent_internal_id"
     select_agent_name = "agent_name" if "agent_name" in agent_cols else "NULL AS agent_name"
     select_tenant_id = "tenant_id" if "tenant_id" in agent_cols else "NULL AS tenant_id"
     select_source_system = (
@@ -1581,12 +1487,9 @@ async def _refresh_application_rollup(db: AsyncSession, business_application_id:
             SELECT brs.agent_internal_id, brs.blended_risk_score
             FROM core.agent_business_applications aba
             JOIN LATERAL (
-                SELECT ara.agent_internal_id, ara.blended_risk_score
+                SELECT ara.agent_id AS agent_internal_id, ara.blended_risk_score
                 FROM core.agent_risk_assessments ara
-                WHERE (ara.agent_id = aba.agent_id
-                       OR (ara.agent_internal_id = aba.agent_internal_id
-                           AND aba.agent_internal_id IS NOT NULL
-                           AND aba.agent_internal_id <> ''))
+                WHERE ara.agent_id = aba.agent_id
                   AND ara.blended_risk_score IS NOT NULL
                 ORDER BY
                     CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -1615,7 +1518,7 @@ async def _refresh_application_rollup(db: AsyncSession, business_application_id:
                 f"""
                 SELECT type_of_risk, risk_classification, risk_classification_score
                 FROM {RISK_MANAGEMENT}.agent_risk_assessment
-                WHERE agent_internal_id = :aid
+                WHERE agent_id = :aid
                   AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                 ORDER BY created_ts DESC NULLS LAST
                 """
@@ -1760,9 +1663,9 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
             SELECT brs.agent_internal_id, brs.blended_risk_score
             FROM core.agent_business_processes abp
             JOIN LATERAL (
-                SELECT ara.agent_internal_id, ara.blended_risk_score
+                SELECT ara.agent_id AS agent_internal_id, ara.blended_risk_score
                 FROM core.agent_risk_assessments ara
-                WHERE (ara.agent_id = abp.agent_id OR ara.agent_internal_id = abp.agent_internal_id)
+                WHERE ara.agent_id = abp.agent_id
                   AND ara.blended_risk_score IS NOT NULL
                 ORDER BY
                     CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -1791,7 +1694,7 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
                 f"""
                 SELECT type_of_risk, risk_classification, risk_classification_score
                 FROM {RISK_MANAGEMENT}.agent_risk_assessment
-                WHERE agent_internal_id = :aid
+                WHERE agent_id = :aid
                   AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                 ORDER BY created_ts DESC NULLS LAST
                 """
@@ -1915,9 +1818,9 @@ async def _refresh_integration_rollup(db: AsyncSession, integration_id: str) -> 
                 SELECT brs.agent_internal_id, brs.blended_risk_score
                 FROM core.agent_business_integrations abi
                 JOIN LATERAL (
-                    SELECT ara.agent_internal_id, ara.blended_risk_score
+                    SELECT ara.agent_id AS agent_internal_id, ara.blended_risk_score
                     FROM core.agent_risk_assessments ara
-                    WHERE (ara.agent_id = abi.agent_id OR ara.agent_internal_id = abi.agent_internal_id)
+                    WHERE ara.agent_id = abi.agent_id
                       AND ara.blended_risk_score IS NOT NULL
                     ORDER BY
                         CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -1947,7 +1850,7 @@ async def _refresh_integration_rollup(db: AsyncSession, integration_id: str) -> 
                 f"""
                 SELECT type_of_risk, risk_classification, risk_classification_score
                 FROM {RISK_MANAGEMENT}.agent_risk_assessment
-                WHERE agent_internal_id = :aid
+                WHERE agent_id = :aid
                   AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                 ORDER BY created_ts DESC NULLS LAST
                 """
@@ -2140,9 +2043,7 @@ async def _fetch_integrations(
     if has_abi:
         abi_cols = await _table_columns(db, "core", "agent_business_integrations")
         abi_agent_id_expr = "abi.agent_id" if "agent_id" in abi_cols else "NULL::text"
-        abi_agent_internal_id_expr = (
-            "abi.agent_internal_id" if "agent_internal_id" in abi_cols else "NULL::text"
-        )
+        abi_agent_internal_id_expr = abi_agent_id_expr
         abi_filter = (
             "abi.integration_id = bi.integration_id"
             if "integration_id" in abi_cols
@@ -2166,14 +2067,11 @@ async def _fetch_integrations(
         int_agent_tenant_filter = ""
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
-            if "agent_internal_id" in agent_cols_check:
+            if "agent_id" in agent_cols_check:
                 int_agent_join_type = "LEFT JOIN"
                 int_agent_company_join = (
-                    f"{int_agent_join_type} core.agents ag ON ("
-                    "(abi.agent_id IS NOT NULL AND abi.agent_id <> '' AND ag.agent_id = abi.agent_id)"
-                    " OR (abi.agent_internal_id IS NOT NULL AND abi.agent_internal_id <> '' "
-                    "AND ag.agent_internal_id = abi.agent_internal_id)"
-                    ") AND COALESCE(ag.is_current, true) = true"
+                    f"{int_agent_join_type} core.agents ag ON ag.agent_id = abi.agent_id"
+                    " AND COALESCE(ag.is_current, true) = true"
                 )
                 if filter_related_by_company_id and "company_id" in agent_cols_check:
                     int_agent_company_filter = (
@@ -2249,13 +2147,13 @@ async def _fetch_integrations(
                         FROM (
                             SELECT
                                 COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
-                                (array_agg(abi.agent_internal_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                                (array_agg(abi.agent_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
                             FROM core.agent_business_integrations abi
                             {int_agent_company_join}
                             JOIN LATERAL (
                                 SELECT ara.blended_risk_score
                                 FROM core.agent_risk_assessments ara
-                                WHERE (ara.agent_id = abi.agent_id OR ara.agent_internal_id = abi.agent_internal_id)
+                                WHERE ara.agent_id = abi.agent_id
                                   AND ara.blended_risk_score IS NOT NULL
                                 ORDER BY {ara_order_int}
                                 LIMIT 1
@@ -2278,7 +2176,7 @@ async def _fetch_integrations(
                             MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS company_residual_class,
                             COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_residual_score
                         FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
-                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                        WHERE ara.agent_id = company_risk.worst_agent_internal_id
                           AND company_risk.worst_agent_internal_id IS NOT NULL
                           AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
                     ) company_risk_class ON TRUE
@@ -2458,9 +2356,7 @@ async def _fetch_applications(
     if has_aba:
         aba_cols = await _table_columns(db, "core", "agent_business_applications")
         aba_agent_id_expr = "aba.agent_id" if "agent_id" in aba_cols else "NULL::text"
-        aba_agent_internal_id_expr = (
-            "aba.agent_internal_id" if "agent_internal_id" in aba_cols else "NULL::text"
-        )
+        aba_agent_internal_id_expr = aba_agent_id_expr
         aba_filter = (
             "aba.business_application_id = ba.business_application_id"
             if "business_application_id" in aba_cols
@@ -2484,14 +2380,11 @@ async def _fetch_applications(
         app_agent_tenant_filter = ""
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
-            if "agent_internal_id" in agent_cols_check:
+            if "agent_id" in agent_cols_check:
                 app_agent_join_type = "LEFT JOIN"
                 app_agent_company_join = (
-                    f"{app_agent_join_type} core.agents ag ON ("
-                    "(aba.agent_id IS NOT NULL AND aba.agent_id <> '' AND ag.agent_id = aba.agent_id)"
-                    " OR (aba.agent_internal_id IS NOT NULL AND aba.agent_internal_id <> '' "
-                    "AND ag.agent_internal_id = aba.agent_internal_id)"
-                    ") AND COALESCE(ag.is_current, true) = true"
+                    f"{app_agent_join_type} core.agents ag ON ag.agent_id = aba.agent_id"
+                    " AND COALESCE(ag.is_current, true) = true"
                 )
                 if filter_related_by_company_id and "company_id" in agent_cols_check:
                     app_agent_company_filter = (
@@ -2567,18 +2460,14 @@ async def _fetch_applications(
                         FROM (
                             SELECT
                                 COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
-                                (array_agg(aba.agent_internal_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                                (array_agg(aba.agent_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
                             FROM core.agent_business_applications aba
                             {app_agent_company_join}
                             JOIN LATERAL (
                                 SELECT ara.blended_risk_score
                                 FROM core.agent_risk_assessments ara
                                 WHERE ara.blended_risk_score IS NOT NULL
-                                  AND (
-                                    ara.agent_id = aba.agent_id
-                                    OR (aba.agent_internal_id IS NOT NULL AND aba.agent_internal_id <> ''
-                                        AND ara.agent_internal_id = aba.agent_internal_id)
-                                  )
+                                  AND ara.agent_id = aba.agent_id
                                 ORDER BY {ara_order}
                                 LIMIT 1
                             ) brs ON TRUE
@@ -2600,7 +2489,7 @@ async def _fetch_applications(
                             MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS company_residual_class,
                             COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_residual_score
                         FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
-                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                        WHERE ara.agent_id = company_risk.worst_agent_internal_id
                           AND company_risk.worst_agent_internal_id IS NOT NULL
                           AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
                     ) company_risk_class ON TRUE
@@ -3055,9 +2944,7 @@ async def _fetch_processes(
     if has_abp:
         abp_cols = await _table_columns(db, "core", "agent_business_processes")
         abp_agent_id_expr = "abp.agent_id" if "agent_id" in abp_cols else "NULL::text"
-        abp_agent_internal_id_expr = (
-            "abp.agent_internal_id" if "agent_internal_id" in abp_cols else "NULL::text"
-        )
+        abp_agent_internal_id_expr = abp_agent_id_expr
         abp_filter = (
             "abp.business_process_id = bp.business_process_id"
             if "business_process_id" in abp_cols
@@ -3081,14 +2968,11 @@ async def _fetch_processes(
         agent_tenant_filter = ""
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
-            if "agent_internal_id" in agent_cols_check:
+            if "agent_id" in agent_cols_check:
                 agent_join_type = "LEFT JOIN"
                 agent_company_join = (
-                    f"{agent_join_type} core.agents ag ON ("
-                    "(abp.agent_id IS NOT NULL AND abp.agent_id <> '' AND ag.agent_id = abp.agent_id)"
-                    " OR (abp.agent_internal_id IS NOT NULL AND abp.agent_internal_id <> '' "
-                    "AND ag.agent_internal_id = abp.agent_internal_id)"
-                    ") AND COALESCE(ag.is_current, true) = true"
+                    f"{agent_join_type} core.agents ag ON ag.agent_id = abp.agent_id"
+                    " AND COALESCE(ag.is_current, true) = true"
                 )
                 if filter_related_by_company_id and "company_id" in agent_cols_check:
                     agent_company_filter = (
@@ -3184,16 +3068,13 @@ async def _fetch_processes(
                         FROM (
                             SELECT
                                 COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
-                                (array_agg(abp.agent_internal_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                                (array_agg(abp.agent_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
                             FROM core.agent_business_processes abp
                             {agent_company_join}
                             JOIN LATERAL (
                                 SELECT ara.blended_risk_score
                                 FROM core.agent_risk_assessments ara
-                                WHERE (ara.agent_id = abp.agent_id
-                                       OR (ara.agent_internal_id = abp.agent_internal_id
-                                           AND abp.agent_internal_id IS NOT NULL
-                                           AND abp.agent_internal_id <> ''))
+                                WHERE ara.agent_id = abp.agent_id
                                   AND ara.blended_risk_score IS NOT NULL
                                 ORDER BY {ara_order_proc}
                                 LIMIT 1
@@ -3216,7 +3097,7 @@ async def _fetch_processes(
                             MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS company_residual_class,
                             COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_residual_score
                         FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
-                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                        WHERE ara.agent_id = company_risk.worst_agent_internal_id
                           AND company_risk.worst_agent_internal_id IS NOT NULL
                           AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
                     ) company_risk_class ON TRUE
@@ -3923,7 +3804,7 @@ async def delete_integration(
     # Delete integration attachments
     try:
         await db.execute(
-            text("DELETE FROM public.integration_attachment WHERE integration_id = :integration_id"),
+            text("DELETE FROM core.integration_attachment WHERE integration_id = :integration_id"),
             {"integration_id": integration_id},
         )
     except Exception:
@@ -4153,7 +4034,7 @@ async def add_agent_integration_relation(
     agent_row = await db.execute(
         text(
             f"""
-            SELECT agent_id, agent_internal_id, agent_name, tenant_id, company_id
+            SELECT agent_id, agent_id AS agent_internal_id, agent_name, tenant_id, company_id
             FROM core.agents
             WHERE agent_id = :agent_id
               {tenant_filter}
@@ -4198,14 +4079,14 @@ async def add_agent_integration_relation(
         text(
             """
             INSERT INTO core.agent_business_integrations (
-                tenant_id, company_id, integration_id, agent_id, agent_internal_id, agent_name, integration_name,
+                tenant_id, company_id, integration_id, agent_id, agent_name, integration_name,
                 created_ts, updated_ts
             )
             VALUES (
-                :tenant_id, :company_id, :integration_id, :agent_id, :agent_internal_id, :agent_name, :integration_name,
+                :tenant_id, :company_id, :integration_id, :agent_id, :agent_name, :integration_name,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
-            ON CONFLICT (agent_internal_id, integration_id)
+            ON CONFLICT (agent_id, integration_id)
             DO UPDATE SET
                 agent_id = EXCLUDED.agent_id,
                 agent_name = EXCLUDED.agent_name,
@@ -4220,7 +4101,6 @@ async def add_agent_integration_relation(
             "company_id": relation_company_id,
             "integration_id": integration_id,
             "agent_id": agent.get("agent_id"),
-            "agent_internal_id": agent.get("agent_internal_id"),
             "agent_name": agent.get("agent_name"),
             "integration_name": integration.get("integration_name") or integration_id,
         },
@@ -4263,17 +4143,13 @@ async def remove_agent_integration_relation(
             f"""
             DELETE FROM core.agent_business_integrations
             WHERE integration_id = :integration_id
-              AND (
-                    agent_internal_id = :agent_internal_id
-                    OR agent_id = :agent_id
-                  )
+              AND agent_id = :agent_id
               {tenant_filter}
               {company_filter}
             """
         ),
         {
             "integration_id": integration_id,
-            "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
             "tenant_id": tenant_id,
             "company_id": company_id,
@@ -4616,7 +4492,7 @@ async def delete_application(
 
     await _ensure_application_attachments_table(db)
     await db.execute(
-        text("DELETE FROM public.application_attachment WHERE application_id = :application_id"),
+        text("DELETE FROM core.application_attachment WHERE application_id = :application_id"),
         {"application_id": application_id},
     )
 
@@ -5313,7 +5189,7 @@ async def delete_process(
 
     await _ensure_process_attachments_table(db)
     await db.execute(
-        text("DELETE FROM public.process_attachment WHERE process_id = :process_id"),
+        text("DELETE FROM core.process_attachment WHERE process_id = :process_id"),
         {"process_id": process_id},
     )
 
@@ -5683,9 +5559,9 @@ async def list_agent_attachments(
     rows = await db.execute(
         text(
             """
-            SELECT id, agent_id, filename, mime_type, file_size_bytes, created_at, updated_at
-            FROM public.agent_attachment
-            WHERE agent_id = :agent_id
+            SELECT id, agent_source_id AS agent_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            FROM core.agent_attachment
+            WHERE agent_source_id = :agent_id
             ORDER BY created_at DESC
             """
         ),
@@ -5722,17 +5598,34 @@ async def create_agent_attachment(
     if len(file_data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
 
+    # agent_source_id isn't unique (SCD2 versions can share it, and it can
+    # collide across tenants) — resolve the owning tenant/company the same
+    # ambiguity-safe way the attachment migrations do: only proceed if
+    # exactly one candidate matches.
+    candidates = await db.execute(
+        text("SELECT DISTINCT tenant_id, company_id FROM core.agents WHERE agent_source_id = :agent_id"),
+        {"agent_id": agent_id},
+    )
+    candidate_rows = candidates.mappings().all()
+    if not candidate_rows:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if len(candidate_rows) > 1:
+        raise HTTPException(status_code=409, detail="Agent id is ambiguous across tenants/companies — cannot attach file")
+    owner = candidate_rows[0]
+
     row = await db.execute(
         text(
             """
-            INSERT INTO public.agent_attachment
-                (agent_id, filename, mime_type, file_size_bytes, file_data)
+            INSERT INTO core.agent_attachment
+                (tenant_id, company_id, agent_source_id, filename, mime_type, file_size_bytes, file_data)
             VALUES
-                (:agent_id, :filename, :mime_type, :file_size_bytes, :file_data)
-            RETURNING id, agent_id, filename, mime_type, file_size_bytes, created_at, updated_at
+                (:tenant_id, :company_id, :agent_id, :filename, :mime_type, :file_size_bytes, :file_data)
+            RETURNING id, agent_source_id AS agent_id, filename, mime_type, file_size_bytes, created_at, updated_at
             """
         ),
         {
+            "tenant_id": owner["tenant_id"],
+            "company_id": owner["company_id"],
             "agent_id": agent_id,
             "filename": filename,
             "mime_type": mime_type,
@@ -5760,9 +5653,9 @@ async def download_agent_attachment(
         text(
             """
             SELECT filename, mime_type, file_data
-            FROM public.agent_attachment
+            FROM core.agent_attachment
             WHERE id = :attachment_id
-              AND agent_id = :agent_id
+              AND agent_source_id = :agent_id
             LIMIT 1
             """
         ),
@@ -5796,9 +5689,9 @@ async def delete_agent_attachment(
     result = await db.execute(
         text(
             """
-            DELETE FROM public.agent_attachment
+            DELETE FROM core.agent_attachment
             WHERE id = :attachment_id
-              AND agent_id = :agent_id
+              AND agent_source_id = :agent_id
             """
         ),
         {"attachment_id": attachment_id, "agent_id": agent_id},
@@ -5824,7 +5717,7 @@ async def list_application_attachments(
         text(
             """
             SELECT id, application_id, filename, mime_type, file_size_bytes, created_at, updated_at
-            FROM public.application_attachment
+            FROM core.application_attachment
             WHERE application_id = :application_id
             ORDER BY created_at DESC
             """
@@ -5863,7 +5756,7 @@ async def create_application_attachment(
         raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
 
     dup = await db.execute(
-        text("SELECT 1 FROM public.application_attachment WHERE application_id = :aid AND filename = :fn LIMIT 1"),
+        text("SELECT 1 FROM core.application_attachment WHERE application_id = :aid AND filename = :fn LIMIT 1"),
         {"aid": application_id, "fn": filename},
     )
     if dup.scalar():
@@ -5872,10 +5765,12 @@ async def create_application_attachment(
     row = await db.execute(
         text(
             """
-            INSERT INTO public.application_attachment
-                (application_id, filename, mime_type, file_size_bytes, file_data)
+            INSERT INTO core.application_attachment
+                (tenant_id, company_id, application_id, filename, mime_type, file_size_bytes, file_data)
             VALUES
-                (:application_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                ((SELECT tenant_id FROM core.business_applications WHERE business_application_id = :application_id),
+                 (SELECT company_id FROM core.business_applications WHERE business_application_id = :application_id),
+                 :application_id, :filename, :mime_type, :file_size_bytes, :file_data)
             RETURNING id, application_id, filename, mime_type, file_size_bytes, created_at, updated_at
             """
         ),
@@ -5906,8 +5801,10 @@ async def create_application_attachment(
             if not dup.scalar():
                 await db.execute(
                     text("""
-                        INSERT INTO twin.dim_node_attachment (node_id, filename, content_type, size_bytes, data)
-                        VALUES (:node_id, :filename, :content_type, :size_bytes, :data)
+                        INSERT INTO twin.dim_node_attachment (tenant_id, company_id, node_id, filename, content_type, size_bytes, data)
+                        VALUES ((SELECT tenant_id FROM twin.dim_node WHERE id = :node_id),
+                                (SELECT company_id FROM twin.dim_node WHERE id = :node_id),
+                                :node_id, :filename, :content_type, :size_bytes, :data)
                     """),
                     {
                         "node_id": node_id,
@@ -5940,7 +5837,7 @@ async def download_application_attachment(
         text(
             """
             SELECT filename, mime_type, file_data
-            FROM public.application_attachment
+            FROM core.application_attachment
             WHERE id = :attachment_id
               AND application_id = :application_id
             LIMIT 1
@@ -5975,7 +5872,7 @@ async def delete_application_attachment(
 
     # Fetch filename before deleting so we can mirror the delete to dim_node_attachment
     fname_row = await db.execute(
-        text("SELECT filename FROM public.application_attachment WHERE id = :aid AND application_id = :app_id LIMIT 1"),
+        text("SELECT filename FROM core.application_attachment WHERE id = :aid AND application_id = :app_id LIMIT 1"),
         {"aid": attachment_id, "app_id": application_id},
     )
     fname_rec = fname_row.mappings().first()
@@ -5986,7 +5883,7 @@ async def delete_application_attachment(
     result = await db.execute(
         text(
             """
-            DELETE FROM public.application_attachment
+            DELETE FROM core.application_attachment
             WHERE id = :attachment_id
               AND application_id = :application_id
             """
@@ -6046,16 +5943,18 @@ async def sync_blueprint_attachments_to_application(
     synced = 0
     for row in rows:
         dup = await db.execute(
-            text("SELECT 1 FROM public.application_attachment WHERE application_id = :app_id AND filename = :fn LIMIT 1"),
+            text("SELECT 1 FROM core.application_attachment WHERE application_id = :app_id AND filename = :fn LIMIT 1"),
             {"app_id": application_id, "fn": row["filename"]},
         )
         if not dup.scalar():
             await db.execute(
                 text(
                     """
-                    INSERT INTO public.application_attachment
-                        (application_id, filename, mime_type, file_size_bytes, file_data)
-                    VALUES (:application_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                    INSERT INTO core.application_attachment
+                        (tenant_id, company_id, application_id, filename, mime_type, file_size_bytes, file_data)
+                    VALUES ((SELECT tenant_id FROM core.business_applications WHERE business_application_id = :application_id),
+                            (SELECT company_id FROM core.business_applications WHERE business_application_id = :application_id),
+                            :application_id, :filename, :mime_type, :file_size_bytes, :file_data)
                     """
                 ),
                 {
@@ -6088,7 +5987,7 @@ async def list_process_attachments(
         text(
             """
             SELECT id, process_id, filename, mime_type, file_size_bytes, created_at, updated_at
-            FROM public.process_attachment
+            FROM core.process_attachment
             WHERE process_id = :process_id
             ORDER BY created_at DESC
             """
@@ -6127,7 +6026,7 @@ async def create_process_attachment(
         raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
 
     dup = await db.execute(
-        text("SELECT 1 FROM public.process_attachment WHERE process_id = :pid AND filename = :fn LIMIT 1"),
+        text("SELECT 1 FROM core.process_attachment WHERE process_id = :pid AND filename = :fn LIMIT 1"),
         {"pid": process_id, "fn": filename},
     )
     if dup.scalar():
@@ -6136,10 +6035,12 @@ async def create_process_attachment(
     row = await db.execute(
         text(
             """
-            INSERT INTO public.process_attachment
-                (process_id, filename, mime_type, file_size_bytes, file_data)
+            INSERT INTO core.process_attachment
+                (tenant_id, company_id, process_id, filename, mime_type, file_size_bytes, file_data)
             VALUES
-                (:process_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                ((SELECT tenant_id FROM core.business_processes WHERE business_process_id = :process_id),
+                 (SELECT company_id FROM core.business_processes WHERE business_process_id = :process_id),
+                 :process_id, :filename, :mime_type, :file_size_bytes, :file_data)
             RETURNING id, process_id, filename, mime_type, file_size_bytes, created_at, updated_at
             """
         ),
@@ -6170,8 +6071,10 @@ async def create_process_attachment(
             if not dup.scalar():
                 await db.execute(
                     text("""
-                        INSERT INTO twin.dim_node_attachment (node_id, filename, content_type, size_bytes, data)
-                        VALUES (:node_id, :filename, :content_type, :size_bytes, :data)
+                        INSERT INTO twin.dim_node_attachment (tenant_id, company_id, node_id, filename, content_type, size_bytes, data)
+                        VALUES ((SELECT tenant_id FROM twin.dim_node WHERE id = :node_id),
+                                (SELECT company_id FROM twin.dim_node WHERE id = :node_id),
+                                :node_id, :filename, :content_type, :size_bytes, :data)
                     """),
                     {"node_id": node_id, "filename": filename, "content_type": mime_type, "size_bytes": len(file_data), "data": file_data},
                 )
@@ -6198,7 +6101,7 @@ async def download_process_attachment(
         text(
             """
             SELECT filename, mime_type, file_data
-            FROM public.process_attachment
+            FROM core.process_attachment
             WHERE id = :attachment_id
               AND process_id = :process_id
             LIMIT 1
@@ -6233,7 +6136,7 @@ async def delete_process_attachment(
 
     # Fetch filename before deleting so we can sync the deletion to dim_node_attachment
     fname_row = await db.execute(
-        text("SELECT filename FROM public.process_attachment WHERE id = :aid AND process_id = :pid LIMIT 1"),
+        text("SELECT filename FROM core.process_attachment WHERE id = :aid AND process_id = :pid LIMIT 1"),
         {"aid": attachment_id, "pid": process_id},
     )
     fname_rec = fname_row.mappings().first()
@@ -6241,7 +6144,7 @@ async def delete_process_attachment(
     result = await db.execute(
         text(
             """
-            DELETE FROM public.process_attachment
+            DELETE FROM core.process_attachment
             WHERE id = :attachment_id
               AND process_id = :process_id
             """
@@ -6302,16 +6205,18 @@ async def sync_blueprint_attachments_to_process(
     synced = 0
     for row in rows:
         dup = await db.execute(
-            text("SELECT 1 FROM public.process_attachment WHERE process_id = :pid AND filename = :fn LIMIT 1"),
+            text("SELECT 1 FROM core.process_attachment WHERE process_id = :pid AND filename = :fn LIMIT 1"),
             {"pid": process_id, "fn": row["filename"]},
         )
         if not dup.scalar():
             await db.execute(
                 text(
                     """
-                    INSERT INTO public.process_attachment
-                        (process_id, filename, mime_type, file_size_bytes, file_data)
-                    VALUES (:process_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                    INSERT INTO core.process_attachment
+                        (tenant_id, company_id, process_id, filename, mime_type, file_size_bytes, file_data)
+                    VALUES ((SELECT tenant_id FROM core.business_processes WHERE business_process_id = :process_id),
+                            (SELECT company_id FROM core.business_processes WHERE business_process_id = :process_id),
+                            :process_id, :filename, :mime_type, :file_size_bytes, :file_data)
                     """
                 ),
                 {
@@ -6346,7 +6251,7 @@ async def list_integration_attachments(
         text(
             """
             SELECT id, integration_id, filename, mime_type, file_size_bytes, created_at, updated_at
-            FROM public.integration_attachment
+            FROM core.integration_attachment
             WHERE integration_id = :integration_id
             ORDER BY created_at DESC
             """
@@ -6385,7 +6290,7 @@ async def create_integration_attachment(
         raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
 
     dup = await db.execute(
-        text("SELECT 1 FROM public.integration_attachment WHERE integration_id = :iid AND filename = :fn LIMIT 1"),
+        text("SELECT 1 FROM core.integration_attachment WHERE integration_id = :iid AND filename = :fn LIMIT 1"),
         {"iid": integration_id, "fn": filename},
     )
     if dup.scalar():
@@ -6394,10 +6299,12 @@ async def create_integration_attachment(
     row = await db.execute(
         text(
             """
-            INSERT INTO public.integration_attachment
-                (integration_id, filename, mime_type, file_size_bytes, file_data)
+            INSERT INTO core.integration_attachment
+                (tenant_id, company_id, integration_id, filename, mime_type, file_size_bytes, file_data)
             VALUES
-                (:integration_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                ((SELECT tenant_id FROM core.business_integrations WHERE integration_id = :integration_id),
+                 (SELECT company_id FROM core.business_integrations WHERE integration_id = :integration_id),
+                 :integration_id, :filename, :mime_type, :file_size_bytes, :file_data)
             RETURNING id, integration_id, filename, mime_type, file_size_bytes, created_at, updated_at
             """
         ),
@@ -6428,8 +6335,10 @@ async def create_integration_attachment(
             if not dup.scalar():
                 await db.execute(
                     text("""
-                        INSERT INTO twin.dim_node_attachment (node_id, filename, content_type, size_bytes, data)
-                        VALUES (:node_id, :filename, :content_type, :size_bytes, :data)
+                        INSERT INTO twin.dim_node_attachment (tenant_id, company_id, node_id, filename, content_type, size_bytes, data)
+                        VALUES ((SELECT tenant_id FROM twin.dim_node WHERE id = :node_id),
+                                (SELECT company_id FROM twin.dim_node WHERE id = :node_id),
+                                :node_id, :filename, :content_type, :size_bytes, :data)
                     """),
                     {"node_id": node_id, "filename": filename, "content_type": mime_type, "size_bytes": len(file_data), "data": file_data},
                 )
@@ -6456,7 +6365,7 @@ async def download_integration_attachment(
         text(
             """
             SELECT filename, mime_type, file_data
-            FROM public.integration_attachment
+            FROM core.integration_attachment
             WHERE id = :attachment_id
               AND integration_id = :integration_id
             LIMIT 1
@@ -6491,7 +6400,7 @@ async def delete_integration_attachment(
 
     # Fetch filename before deleting for dim_node sync
     fname_row = await db.execute(
-        text("SELECT filename FROM public.integration_attachment WHERE id = :aid AND integration_id = :iid LIMIT 1"),
+        text("SELECT filename FROM core.integration_attachment WHERE id = :aid AND integration_id = :iid LIMIT 1"),
         {"aid": attachment_id, "iid": integration_id},
     )
     fname_rec = fname_row.mappings().first()
@@ -6499,7 +6408,7 @@ async def delete_integration_attachment(
     result = await db.execute(
         text(
             """
-            DELETE FROM public.integration_attachment
+            DELETE FROM core.integration_attachment
             WHERE id = :attachment_id
               AND integration_id = :integration_id
             """
@@ -6560,16 +6469,18 @@ async def sync_blueprint_attachments_to_integration(
     synced = 0
     for row in rows:
         dup = await db.execute(
-            text("SELECT 1 FROM public.integration_attachment WHERE integration_id = :iid AND filename = :fn LIMIT 1"),
+            text("SELECT 1 FROM core.integration_attachment WHERE integration_id = :iid AND filename = :fn LIMIT 1"),
             {"iid": integration_id, "fn": row["filename"]},
         )
         if not dup.scalar():
             await db.execute(
                 text(
                     """
-                    INSERT INTO public.integration_attachment
-                        (integration_id, filename, mime_type, file_size_bytes, file_data)
-                    VALUES (:integration_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                    INSERT INTO core.integration_attachment
+                        (tenant_id, company_id, integration_id, filename, mime_type, file_size_bytes, file_data)
+                    VALUES ((SELECT tenant_id FROM core.business_integrations WHERE integration_id = :integration_id),
+                            (SELECT company_id FROM core.business_integrations WHERE integration_id = :integration_id),
+                            :integration_id, :filename, :mime_type, :file_size_bytes, :file_data)
                     """
                 ),
                 {
@@ -6640,7 +6551,7 @@ async def get_agent_relations(
             FROM core.agent_business_applications aba
             LEFT JOIN core.business_applications ba
                 ON ba.business_application_id = aba.business_application_id
-            WHERE aba.agent_internal_id = :agent_internal_id
+            WHERE aba.agent_id = :agent_internal_id
               {app_company_filter}
               {_agent_tf('ba')}
             ORDER BY LOWER(COALESCE(ba.application_name, aba.application_name, aba.business_application_id))
@@ -6712,7 +6623,7 @@ async def get_agent_relations(
                 WHERE linked.other_process_id IS NOT NULL
                   AND linked.other_process_id <> abp.business_process_id
             ) proc_rel ON TRUE
-            WHERE abp.agent_internal_id = :agent_internal_id
+            WHERE abp.agent_id = :agent_internal_id
               {proc_company_filter}
               {_agent_tf('bp')}
             ORDER BY LOWER(COALESCE(bp.process_name, abp.process_name, abp.business_process_id))
@@ -6919,7 +6830,7 @@ async def get_agent_relations(
     #   - the agent that is my parent       -> my parent  (direction PARENT)
     child_agents: list[dict[str, Any]] = []
     agent_cols = await _table_columns(db, "core", "agents")
-    if "parent_agent_internal_id" in agent_cols:
+    if "parent_agent_id" in agent_cols:
         name_expr = "agent_name" if "agent_name" in agent_cols else "NULL::text"
         desc_expr = "agent_description" if "agent_description" in agent_cols else "NULL::text"
         _ca_incl = " OR {col}.company_id IS NULL OR TRIM(CAST({col}.company_id AS text)) = '' OR {col}.company_id = 'None'"
@@ -6934,18 +6845,17 @@ async def get_agent_relations(
         child_rows = await db.execute(
             text(
                 f"""
-                SELECT agent_id, agent_internal_id, agent_name, agent_description, relationship_label, direction
+                SELECT agent_id, agent_id AS agent_internal_id, agent_name, agent_description, relationship_label, direction
                 FROM (
                     -- Agents whose parent is me (my child agents)
                     SELECT
                         a.agent_id AS agent_id,
-                        a.agent_internal_id AS agent_internal_id,
                         COALESCE(a.{name_expr}, a.agent_id) AS agent_name,
                         a.{desc_expr} AS agent_description,
                         NULL::text AS relationship_label,
                         'CHILD'::text AS direction
                     FROM core.agents a
-                    WHERE a.parent_agent_internal_id = :agent_internal_id
+                    WHERE a.parent_agent_id = :agent_internal_id
                       AND COALESCE(a.is_current, true) = true
                       {child_company_filter}
                       {_agent_tf('a')}
@@ -6953,19 +6863,18 @@ async def get_agent_relations(
                     -- The agent that is my parent
                     SELECT
                         p.agent_id AS agent_id,
-                        p.agent_internal_id AS agent_internal_id,
                         COALESCE(p.{name_expr}, p.agent_id) AS agent_name,
                         p.{desc_expr} AS agent_description,
                         NULL::text AS relationship_label,
                         'PARENT'::text AS direction
                     FROM core.agents me
                     JOIN core.agents p
-                        ON p.agent_internal_id = me.parent_agent_internal_id
+                        ON p.agent_id = me.parent_agent_id
                         AND COALESCE(p.is_current, true) = true
                         {parent_company_filter}
-                    WHERE me.agent_internal_id = :agent_internal_id
+                    WHERE me.agent_id = :agent_internal_id
                       AND COALESCE(me.is_current, true) = true
-                      AND COALESCE(me.parent_agent_internal_id, '') <> ''
+                      AND COALESCE(me.parent_agent_id, '') <> ''
                       {_agent_tf('p')}
                 ) rel
                 ORDER BY LOWER(COALESCE(agent_name, agent_id, ''))
@@ -7027,7 +6936,7 @@ async def get_agent_relations(
                             {status_expr} AS status
                         FROM core.agent_ai_models rel
                         {join_sql}
-                        WHERE rel.agent_internal_id = :agent_internal_id
+                        WHERE rel.agent_id = :agent_internal_id
                           {model_company_filter}
                           {_agent_tf('m')}
                           AND rel.ai_model_id IS NOT NULL
@@ -7069,7 +6978,7 @@ async def get_agent_relations(
                 FROM core.agent_business_integrations abi
                 LEFT JOIN core.business_integrations bi
                     ON bi.integration_id = abi.integration_id
-                WHERE abi.agent_internal_id = :agent_internal_id
+                WHERE abi.agent_id = :agent_internal_id
                   {int_company_filter}
                   {_agent_tf('bi')}
                 ORDER BY LOWER(COALESCE(bi.integration_name, abi.integration_name, abi.integration_id))
@@ -7123,7 +7032,7 @@ async def add_agent_application_relation(
     agent_row = await db.execute(
         text(
             f"""
-            SELECT agent_id, agent_internal_id, agent_name, tenant_id, company_id
+            SELECT agent_id, agent_id AS agent_internal_id, agent_name, tenant_id, company_id
             FROM core.agents
             WHERE agent_id = :agent_id
               {tenant_filter}
@@ -7203,13 +7112,13 @@ async def add_agent_application_relation(
             """
             INSERT INTO core.agent_business_applications (
                 tenant_id, company_id, business_application_id, agent_id, application_name, criticality,
-                created_ts, updated_ts, agent_internal_id
+                created_ts, updated_ts
             )
             VALUES (
                 :tenant_id, :company_id, :business_application_id, :agent_id, :application_name, :criticality,
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :agent_internal_id
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
-            ON CONFLICT (agent_internal_id, business_application_id)
+            ON CONFLICT (agent_id, business_application_id)
             DO UPDATE SET
                 agent_id = EXCLUDED.agent_id,
                 application_name = EXCLUDED.application_name,
@@ -7226,7 +7135,6 @@ async def add_agent_application_relation(
             "agent_id": agent.get("agent_id"),
             "application_name": app.get("application_name") or application_id,
             "criticality": app.get("business_criticality"),
-            "agent_internal_id": agent.get("agent_internal_id"),
         },
     )
 
@@ -7266,17 +7174,13 @@ async def remove_agent_application_relation(
             f"""
             DELETE FROM core.agent_business_applications
             WHERE business_application_id = :business_application_id
-              AND (
-                    agent_internal_id = :agent_internal_id
-                    OR agent_id = :agent_id
-                  )
+              AND agent_id = :agent_id
               {tenant_filter}
               {company_filter}
             """
         ),
         {
             "business_application_id": application_id,
-            "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
             "tenant_id": tenant_id,
             "company_id": company_id,
@@ -7317,7 +7221,7 @@ async def add_agent_process_relation(
     agent_row = await db.execute(
         text(
             f"""
-            SELECT agent_id, agent_internal_id, agent_name, tenant_id, company_id
+            SELECT agent_id, agent_id AS agent_internal_id, agent_name, tenant_id, company_id
             FROM core.agents
             WHERE agent_id = :agent_id
               {tenant_filter}
@@ -7396,13 +7300,13 @@ async def add_agent_process_relation(
             """
             INSERT INTO core.agent_business_processes (
                 tenant_id, company_id, business_process_id, agent_id, process_name, criticality,
-                created_ts, updated_ts, agent_internal_id
+                created_ts, updated_ts
             )
             VALUES (
                 :tenant_id, :company_id, :business_process_id, :agent_id, :process_name, :criticality,
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :agent_internal_id
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
-            ON CONFLICT (agent_internal_id, business_process_id)
+            ON CONFLICT (agent_id, business_process_id)
             DO UPDATE SET
                 agent_id = EXCLUDED.agent_id,
                 process_name = EXCLUDED.process_name,
@@ -7419,7 +7323,6 @@ async def add_agent_process_relation(
             "agent_id": agent.get("agent_id"),
             "process_name": process.get("process_name") or process_id,
             "criticality": process.get("business_criticality"),
-            "agent_internal_id": agent.get("agent_internal_id"),
         },
     )
 
@@ -7459,17 +7362,13 @@ async def remove_agent_process_relation(
             f"""
             DELETE FROM core.agent_business_processes
             WHERE business_process_id = :business_process_id
-              AND (
-                    agent_internal_id = :agent_internal_id
-                    OR agent_id = :agent_id
-                  )
+              AND agent_id = :agent_id
               {tenant_filter}
               {company_filter}
             """
         ),
         {
             "business_process_id": process_id,
-            "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
             "tenant_id": tenant_id,
             "company_id": company_id,
@@ -7501,10 +7400,10 @@ async def add_child_agent_relation(
         raise HTTPException(status_code=400, detail="An agent cannot be linked to itself.")
 
     agent_cols = await _table_columns(db, "core", "agents")
-    if "parent_agent_internal_id" not in agent_cols:
+    if "parent_agent_id" not in agent_cols:
         raise HTTPException(
             status_code=500,
-            detail="core.agents.parent_agent_internal_id column not found",
+            detail="core.agents.parent_agent_id column not found",
         )
 
     parent = await _resolve_agent(db, agent_id)
@@ -7519,9 +7418,9 @@ async def add_child_agent_relation(
         text(
             """
             UPDATE core.agents
-            SET parent_agent_internal_id = :parent_agent_internal_id,
+            SET parent_agent_id = :parent_agent_internal_id,
                 updated_ts = CURRENT_TIMESTAMP
-            WHERE agent_internal_id = :child_agent_internal_id
+            WHERE agent_id = :child_agent_internal_id
             """
         ),
         {
@@ -7556,7 +7455,7 @@ async def ensure_agent_tool_uuids(
         text(
             """
             DELETE FROM core.agent_tools
-            WHERE agent_internal_id = :agent_internal_id
+            WHERE agent_id = :agent_internal_id
               AND (tool_id IS NULL OR tool_id = '')
               AND (tool_name IS NULL OR tool_name = '')
             """
@@ -7575,7 +7474,7 @@ async def ensure_agent_tool_uuids(
                     ORDER BY t.updated_ts DESC NULLS LAST
                     LIMIT 1) AS existing_tool_id
             FROM core.agent_tools at2
-            WHERE at2.agent_internal_id = :agent_internal_id
+            WHERE at2.agent_id = :agent_internal_id
               AND (at2.tool_id IS NULL OR at2.tool_id = '')
               AND at2.tool_name IS NOT NULL AND at2.tool_name != ''
             """
@@ -7612,7 +7511,7 @@ async def ensure_agent_tool_uuids(
                     updated_ts = CURRENT_TIMESTAMP
                 WHERE (tool_id IS NULL OR tool_id = '')
                   AND LOWER(tool_name) = LOWER(:name)
-                  AND agent_internal_id = :agent_internal_id
+                  AND agent_id = :agent_internal_id
                 """
             ),
             {"new_id": resolved_id, "name": tool_name,
@@ -7680,7 +7579,7 @@ async def list_agent_tools(
             linked AS (
                 SELECT tool_id, tool_name
                 FROM core.agent_tools
-                WHERE agent_internal_id = :agent_internal_id
+                WHERE agent_id = :agent_internal_id
             )
             SELECT
                 c.effective_tool_id,
@@ -7708,7 +7607,7 @@ async def list_agent_tools(
                 NULL AS tool_description,
                 TRUE AS is_linked
             FROM core.agent_tools lk2
-            WHERE lk2.agent_internal_id = :agent_internal_id
+            WHERE lk2.agent_id = :agent_internal_id
               AND NOT EXISTS (
                   SELECT 1 FROM core.tools t5
                   WHERE (lk2.tool_id IS NOT NULL AND t5.tool_id = lk2.tool_id)
@@ -7778,12 +7677,12 @@ async def add_agent_tool_relation(
         text(
             """
             INSERT INTO core.agent_tools
-                (tenant_id, company_id, agent_internal_id, tool_id, agent_id, tool_name,
+                (tenant_id, company_id, tool_id, agent_id, tool_name,
                  created_ts, updated_ts)
             VALUES
-                (:tenant_id, :company_id, :agent_internal_id, :tool_id, :agent_id, :tool_name,
+                (:tenant_id, :company_id, :tool_id, :agent_id, :tool_name,
                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
+            ON CONFLICT (agent_id, tool_id) DO UPDATE SET
                 agent_id = EXCLUDED.agent_id,
                 tool_name = EXCLUDED.tool_name,
                 updated_ts = EXCLUDED.updated_ts
@@ -7792,7 +7691,6 @@ async def add_agent_tool_relation(
         {
             "tenant_id": agent.get("tenant_id"),
             "company_id": agent.get("company_id"),
-            "agent_internal_id": agent.get("agent_internal_id"),
             "tool_id": actual_tool_id,
             "agent_id": agent.get("agent_id"),
             "tool_name": tool_name_val,
@@ -7820,15 +7718,11 @@ async def remove_agent_tool_relation(
             """
             DELETE FROM core.agent_tools
             WHERE tool_id = :tool_id
-              AND (
-                    agent_internal_id = :agent_internal_id
-                    OR agent_id = :agent_id
-                  )
+              AND agent_id = :agent_id
             """
         ),
         {
             "tool_id": tool_id,
-            "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
         },
     )
@@ -7888,7 +7782,7 @@ async def list_agent_tables(
             FROM core.tables t
             LEFT JOIN core.agent_tables agt
                 ON agt.table_id = t.table_id
-                AND (agt.agent_id = :agent_id OR agt.agent_internal_id = :agent_internal_id)
+                AND agt.agent_id = :agent_id
             WHERE 1=1 {search_clause} {tenant_filter} {company_filter}
             ORDER BY is_linked DESC, t.name ASC NULLS LAST
             """
@@ -7923,10 +7817,10 @@ async def add_agent_table_relation(
         text(
             """
             INSERT INTO core.agent_tables
-                (tenant_id, company_id, agent_id, agent_name, agent_internal_id,
+                (tenant_id, company_id, agent_id, agent_name,
                  table_id, table_name, created_ts, updated_ts)
             VALUES
-                (:tenant_id, :company_id, :agent_id, :agent_name, :agent_internal_id,
+                (:tenant_id, :company_id, :agent_id, :agent_name,
                  :table_id, :table_name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET
                 agent_name = EXCLUDED.agent_name,
@@ -7939,7 +7833,6 @@ async def add_agent_table_relation(
             "company_id": agent.get("company_id"),
             "agent_id": agent.get("agent_id"),
             "agent_name": agent.get("agent_name"),
-            "agent_internal_id": agent.get("agent_internal_id"),
             "table_id": table_id,
             "table_name": table.get("name") or table_id,
         },
@@ -7948,13 +7841,13 @@ async def add_agent_table_relation(
     await db.execute(
         text("""
             INSERT INTO core.agent_data_sources (
-                tenant_id, company_id, agent_internal_id, agent_id,
+                tenant_id, company_id, agent_id,
                 source_object_type, source_object_id, source_object_name,
                 target_object_type, target_object_id, target_object_name,
                 created_ts, updated_ts
             )
             SELECT
-                :tenant_id, :company_id, :agent_internal_id, :agent_id,
+                :tenant_id, :company_id, :agent_id,
                 'Table', tc.table_id, :table_name,
                 'Column', tc.column_id, tc.column_name,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
@@ -7962,12 +7855,11 @@ async def add_agent_table_relation(
             WHERE tc.table_id = :table_id
               AND tc.column_name IS NOT NULL AND tc.column_name != ''
               AND tc.column_id IS NOT NULL AND tc.column_id != ''
-            ON CONFLICT (agent_internal_id, source_object_id, target_object_id) DO NOTHING
+            ON CONFLICT (agent_id, source_object_id, target_object_id) DO NOTHING
         """),
         {
             "tenant_id": agent.get("tenant_id"),
             "company_id": agent.get("company_id"),
-            "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
             "table_id": table_id,
             "table_name": table.get("name") or table_id,
@@ -7994,12 +7886,11 @@ async def remove_agent_table_relation(
         text("""
             DELETE FROM core.agent_tables
             WHERE table_id = :table_id
-              AND (agent_id = :agent_id OR agent_internal_id = :agent_internal_id)
+              AND agent_id = :agent_id
         """),
         {
             "table_id": table_id,
             "agent_id": agent.get("agent_id"),
-            "agent_internal_id": agent.get("agent_internal_id"),
         },
     )
     await db.commit()
@@ -8064,8 +7955,8 @@ async def list_agent_columns(
             JOIN core.agent_tables agt
                 ON (agt.table_id = ads.source_object_id
                     OR LOWER(agt.table_name) = LOWER(ads.source_object_name))
-                AND (agt.agent_id = :agent_id OR agt.agent_internal_id = :agent_internal_id)
-            WHERE (ads.agent_internal_id = :agent_internal_id OR ads.agent_id = :agent_id)
+                AND agt.agent_id = :agent_id
+            WHERE ads.agent_id = :agent_id
               AND LOWER(ads.target_object_type) = 'column'
               AND ads.target_object_name IS NOT NULL AND ads.target_object_name != ''
               {search_clause_linked}
@@ -8085,12 +7976,12 @@ async def list_agent_columns(
             FROM core.table_columns tc
             JOIN core.agent_tables agt
                 ON agt.table_id = tc.table_id
-                AND (agt.agent_id = :agent_id OR agt.agent_internal_id = :agent_internal_id)
+                AND agt.agent_id = :agent_id
             LEFT JOIN core.tables t ON t.table_id = tc.table_id
             WHERE tc.column_name IS NOT NULL AND tc.column_name != ''
               AND NOT EXISTS (
                   SELECT 1 FROM core.agent_data_sources ads2
-                  WHERE (ads2.agent_internal_id = :agent_internal_id OR ads2.agent_id = :agent_id)
+                  WHERE ads2.agent_id = :agent_id
                     AND LOWER(ads2.target_object_type) = 'column'
                     AND (ads2.target_object_id = tc.column_id
                          OR LOWER(ads2.target_object_name) = LOWER(tc.column_name))
@@ -8114,7 +8005,6 @@ async def add_agent_column_relation(
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
-    agent_internal_id = agent.get("agent_internal_id")
     real_agent_id = agent.get("agent_id")
     tenant_id = agent.get("tenant_id")
 
@@ -8136,18 +8026,18 @@ async def add_agent_column_relation(
     await db.execute(
         text("""
             INSERT INTO core.agent_data_sources (
-                tenant_id, company_id, agent_internal_id, agent_id,
+                tenant_id, company_id, agent_id,
                 source_object_type, source_object_id, source_object_name,
                 target_object_type, target_object_id, target_object_name,
                 created_ts, updated_ts
             )
             VALUES (
-                :tid, :company_id, :aiid, :agent_id,
+                :tid, :company_id, :agent_id,
                 'Table', :table_id, :table_name,
                 'Column', :col_id, :col_name,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
-            ON CONFLICT (agent_internal_id, source_object_id, target_object_id) DO UPDATE SET
+            ON CONFLICT (agent_id, source_object_id, target_object_id) DO UPDATE SET
                 source_object_name = EXCLUDED.source_object_name,
                 target_object_name = EXCLUDED.target_object_name,
                 updated_ts = EXCLUDED.updated_ts
@@ -8155,7 +8045,6 @@ async def add_agent_column_relation(
         {
             "tid": tenant_id,
             "company_id": agent.get("company_id"),
-            "aiid": agent_internal_id,
             "agent_id": real_agent_id,
             "table_id": col.get("table_id"),
             "table_name": col.get("table_name"),
@@ -8178,18 +8067,16 @@ async def remove_agent_column_relation(
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
-    agent_internal_id = agent.get("agent_internal_id")
     real_agent_id = agent.get("agent_id")
 
     result = await db.execute(
         text("""
             DELETE FROM core.agent_data_sources
-            WHERE (agent_internal_id = :agent_internal_id OR agent_id = :agent_id)
+            WHERE agent_id = :agent_id
               AND LOWER(target_object_type) = 'column'
               AND (target_object_id = :col_id OR LOWER(target_object_name) = LOWER(:col_id))
         """),
         {
-            "agent_internal_id": agent_internal_id,
             "agent_id": real_agent_id,
             "col_id": column_id,
         },
@@ -8214,10 +8101,10 @@ async def remove_child_agent_relation(
     db: AsyncSession = Depends(get_db),
 ):
     agent_cols = await _table_columns(db, "core", "agents")
-    if "parent_agent_internal_id" not in agent_cols:
+    if "parent_agent_id" not in agent_cols:
         raise HTTPException(
             status_code=500,
-            detail="core.agents.parent_agent_internal_id column not found",
+            detail="core.agents.parent_agent_id column not found",
         )
 
     agent_a = await _resolve_agent(db, agent_id)
@@ -8232,10 +8119,10 @@ async def remove_child_agent_relation(
         text(
             """
             UPDATE core.agents
-            SET parent_agent_internal_id = NULL,
+            SET parent_agent_id = NULL,
                 updated_ts = CURRENT_TIMESTAMP
-            WHERE (agent_internal_id = :a_internal AND parent_agent_internal_id = :b_internal)
-               OR (agent_internal_id = :b_internal AND parent_agent_internal_id = :a_internal)
+            WHERE (agent_id = :a_internal AND parent_agent_id = :b_internal)
+               OR (agent_id = :b_internal AND parent_agent_id = :a_internal)
             """
         ),
         {

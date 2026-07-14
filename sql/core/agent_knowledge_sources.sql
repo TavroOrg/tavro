@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS core.agent_knowledge_sources (
-  tenant_id TEXT,
-  company_id TEXT,
-  agent_id TEXT,
+  tenant_id TEXT NOT NULL,
+  company_id TEXT NOT NULL,
+  agent_source_id TEXT,
   identifier TEXT,
   name TEXT,
   access_mechanism TEXT,
@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS core.agent_knowledge_sources (
   status TEXT,
   created_ts timestamp,
   updated_ts timestamp,
-  agent_internal_id TEXT
+  agent_id TEXT,
+  CONSTRAINT chk_agent_knowledge_sources_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
+  CONSTRAINT chk_agent_knowledge_sources_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> '')
 );
-

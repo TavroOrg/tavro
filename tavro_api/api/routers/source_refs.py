@@ -29,9 +29,11 @@ async def create_source_ref(body: SourceRefCreate, db: AsyncSession = Depends(ge
     row = await db.execute(
         text("""
             INSERT INTO twin.source_ref
-                (dim_node_id, system_name, external_id, mcp_tool)
+                (tenant_id, company_id, dim_node_id, system_name, external_id, mcp_tool)
             VALUES
-                (:dim_node_id, :system_name, :external_id, :mcp_tool)
+                ((SELECT tenant_id FROM twin.dim_node WHERE id = :dim_node_id),
+                 (SELECT company_id FROM twin.dim_node WHERE id = :dim_node_id),
+                 :dim_node_id, :system_name, :external_id, :mcp_tool)
             RETURNING *
         """),
         {

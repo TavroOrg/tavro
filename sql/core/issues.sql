@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.issues (
-	tenant_id TEXT,
-	company_id TEXT,
+	tenant_id TEXT NOT NULL,
+	company_id TEXT NOT NULL,
 	issue_id TEXT,
 	title TEXT,
 	description TEXT,
@@ -14,5 +14,8 @@ CREATE TABLE IF NOT EXISTS core.issues (
 	assignee TEXT,
 	owner TEXT,
 	created_ts TIMESTAMP,
-	updated_ts TIMESTAMP
+	updated_ts TIMESTAMP,
+	CONSTRAINT chk_issues_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
+	CONSTRAINT chk_issues_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> ''),
+	CONSTRAINT pk_core_issues PRIMARY KEY (tenant_id, company_id, issue_id)
 );
