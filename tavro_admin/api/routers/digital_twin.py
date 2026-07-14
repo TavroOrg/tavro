@@ -5,9 +5,8 @@ Admins upload a single CSV file; each row becomes one chunk of text
 ("column: value" lines), which gets embedded and stored in
 twin.enterprise_metadata so the AI assistant can later search over it.
 
-A given file (by tenant/company/file_name) can only be vectorized once —
-re-uploading an already-processed file is rejected rather than replacing
-or appending rows.
+Re-uploading a file (same tenant/company/file_name) replaces its
+previously stored rows rather than appending or being rejected.
 """
 from __future__ import annotations
 
@@ -37,7 +36,7 @@ def _resolve_company_id(request: Request) -> str | None:
 
 
 @router.post("/digital-twin/process")
-async def process_csv(
+async def process_csv(  
     request: Request,
     file: UploadFile = File(...),
     auth: dict = Depends(require_portal_admin),
@@ -56,12 +55,6 @@ async def process_csv(
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
 
     async with AsyncSessionLocal() as db:
-        if await store.is_file_already_processed(db, tenant_id, company_id, file_name):
-            raise HTTPException(
-                status_code=409,
-                detail=f'"{file_name}" has already been processed. Re-uploading it is not supported.',
-            )
-
         try:
             df = parser.parse_csv(raw)
         except ValueError as exc:
@@ -72,7 +65,7 @@ async def process_csv(
             raise HTTPException(status_code=422, detail="No usable rows were found in this CSV.")
 
         embeddings = await embedder.embed_texts([c["chunk_text"] for c in chunks])
-        await store.insert_chunks(db, tenant_id, company_id, file_name, chunks, embeddings)
+        await store.upsert_chunks(db, tenant_id, company_id, file_name, chunks, embeddings)
 
     return {
         "file_name": file_name,
