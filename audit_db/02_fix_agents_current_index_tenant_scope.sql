@@ -6,6 +6,14 @@
 -- "duplicate key value violates unique constraint ux_core_agents_current"
 -- even though the destination is a different tenant/company).
 --
+-- RUN AFTER 01_rename_agent_id_and_agent_source_id.sql. This script
+-- builds the index on the column literally named agent_id — if the
+-- rename hasn't happened yet, "agent_id" still means the OLD business-key
+-- column at that moment, and the index ends up bound to the wrong column
+-- (Postgres's rename is attnum-based, so it silently follows the rename
+-- afterward instead of erroring — this was found and fixed the hard way
+-- on a database that ran these out of order; see git history).
+--
 -- SAFE TO RUN ON A LIVE DATABASE:
 --   - Detects the legacy global-shaped index by definition text (not just
 --     name), so it's a no-op if already fixed.

@@ -9,6 +9,15 @@
 --   2. Promote composite (tenant_id, company_id, <asset_id>) keys to
 --      PRIMARY KEY wherever that is safe without breaking a live FK
 --
+-- RUN AFTER 01_rename_agent_id_and_agent_source_id.sql. Section B builds
+-- core.agents' PK on the column literally named agent_id — if the rename
+-- hasn't happened yet, "agent_id" still means the OLD business-key column
+-- at that moment, and the PK (and every FK in 04_high_composite_foreign_keys.sql
+-- that targets it) ends up bound to the wrong column. Postgres's rename is
+-- attnum-based, so it silently follows the rename afterward instead of
+-- erroring — this was found and fixed the hard way on a database that ran
+-- these out of order; see git history.
+--
 -- SAFE TO RUN ON A LIVE DATABASE:
 --   - CHECK constraints are added NOT VALID: they block new violating
 --     INSERT/UPDATE immediately but do NOT scan or fail against existing

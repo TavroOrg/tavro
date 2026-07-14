@@ -217,6 +217,44 @@ BEGIN
 END $$;
 
 -- ------------------------------------------------------------
+-- Step 5: widen each table's PK to (tenant_id, company_id, id), matching
+-- the (tenant_id, company_id, asset_id) pattern used everywhere else in
+-- core/twin. Only attempted once tenant_id/company_id are NOT NULL (see
+-- Step 4) — a composite PK can't tolerate NULLs, and nothing FKs to any
+-- of these 5 tables by bare id, so this is a safe direct replacement.
+-- ------------------------------------------------------------
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN
+        SELECT * FROM (VALUES
+            ('ai_model_attachment', 'ai_model_attachment_pkey', 'pk_ai_model_attachment'),
+            ('application_attachment', 'application_attachment_pkey', 'pk_application_attachment'),
+            ('integration_attachment', 'integration_attachment_pkey', 'pk_integration_attachment'),
+            ('process_attachment', 'process_attachment_pkey', 'pk_process_attachment'),
+            ('use_case_attachment', 'use_case_attachment_pkey', 'pk_use_case_attachment')
+        ) AS t(child_table, old_pk_name, new_pk_name)
+    LOOP
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = r.new_pk_name)
+               AND EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'core' AND table_name = r.child_table
+                      AND column_name = 'tenant_id' AND is_nullable = 'NO'
+               )
+            THEN
+                EXECUTE format('ALTER TABLE core.%I DROP CONSTRAINT IF EXISTS %I', r.child_table, r.old_pk_name);
+                EXECUTE format('ALTER TABLE core.%I ADD CONSTRAINT %I PRIMARY KEY (tenant_id, company_id, id)', r.child_table, r.new_pk_name);
+                RAISE NOTICE 'core.%: PK widened to (tenant_id, company_id, id)', r.child_table;
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'core.%: PK widen skipped (likely tenant_id/company_id not yet NOT NULL — see Step 4) — %', r.child_table, SQLERRM;
+        END;
+    END LOOP;
+END $$;
+
+-- ------------------------------------------------------------
 -- Diagnostic report: every row still NULL, with every candidate tenant/
 -- company it could belong to. Use this to hand-write the resolving
 -- UPDATE statements described in the header comment.

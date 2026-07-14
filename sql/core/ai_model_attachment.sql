@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS core.ai_model_attachment (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID NOT NULL DEFAULT gen_random_uuid(),
     tenant_id TEXT NOT NULL,
     company_id TEXT NOT NULL,
     ai_model_id TEXT NOT NULL,
@@ -12,6 +12,9 @@ CREATE TABLE IF NOT EXISTS core.ai_model_attachment (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT chk_ai_model_attachment_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
     CONSTRAINT chk_ai_model_attachment_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> ''),
+    -- Composite PK for consistency with every other core/twin table,
+    -- matching the (tenant_id, company_id, asset_id) pattern.
+    CONSTRAINT pk_ai_model_attachment PRIMARY KEY (tenant_id, company_id, id),
     CONSTRAINT fk_ai_model_attachment_ai_model FOREIGN KEY (tenant_id, company_id, ai_model_id) REFERENCES core.ai_models (tenant_id, company_id, ai_model_id) ON DELETE CASCADE
 );
 

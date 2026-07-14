@@ -9,7 +9,7 @@
 -- below just builds the correct shape directly.
 --
 -- NO EXCEPTION HANDLER around the DROP, deliberately — see
--- audit_db/01_fix_agents_current_index_tenant_scope.sql for why: catching
+-- audit_db/02_fix_agents_current_index_tenant_scope.sql for why: catching
 -- everything here silently swallowed real DROP failures (transient lock
 -- contention), leaving the legacy index in place while still reporting
 -- success. The IF EXISTS check already makes this safe to re-run.
@@ -115,7 +115,7 @@ ON core.agent_data_sources (agent_id, source_object_id, target_object_id);
 -- ux_core_business_applications / ux_core_business_processes removed:
 -- both tables now declare their composite PK inline in
 -- sql/core/business_applications.sql / business_processes.sql. On an
--- already-existing production database, audit_db/02_critical_tenant_and_composite_pk.sql
+-- already-existing production database, audit_db/03_critical_tenant_and_composite_pk.sql
 -- still promotes whatever unique index is already there under those names.
 
 -- ux_core_columns removed: column_id is now the PRIMARY KEY

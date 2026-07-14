@@ -5,8 +5,11 @@
 -- keys wherever the referenced table's key is composite (per Critical #2),
 -- and single-column keys where it is not.
 --
--- RUN AFTER 02_critical_tenant_and_composite_pk.sql — every FK here targets
--- a PRIMARY KEY or UNIQUE constraint added by that script.
+-- RUN AFTER 01_rename_agent_id_and_agent_source_id.sql and
+-- 03_critical_tenant_and_composite_pk.sql — every FK here targets a
+-- PRIMARY KEY or UNIQUE constraint added by that script, and every FK
+-- referencing core.agents uses agent_id, which must already mean the
+-- post-rename canonical identity when this runs.
 --
 -- SAFE TO RUN ON A LIVE DATABASE:
 --   - Every FK is added NOT VALID: blocks new violating INSERT/UPDATE

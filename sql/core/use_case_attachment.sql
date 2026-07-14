@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS core.use_case_attachment (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID NOT NULL DEFAULT gen_random_uuid(),
     tenant_id TEXT NOT NULL,
     company_id TEXT NOT NULL,
     use_case_id TEXT NOT NULL,
@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS core.use_case_attachment (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT chk_use_case_attachment_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
     CONSTRAINT chk_use_case_attachment_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> ''),
+    CONSTRAINT pk_use_case_attachment PRIMARY KEY (tenant_id, company_id, id),
     CONSTRAINT fk_use_case_attachment_use_case FOREIGN KEY (tenant_id, company_id, use_case_id) REFERENCES core.ai_use_cases (tenant_id, company_id, ai_use_case_id) ON DELETE CASCADE
 );
 

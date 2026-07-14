@@ -53,7 +53,7 @@
 --     so exactly one source row is always available.
 --   - NOT NULL / PRIMARY KEY / composite FK promotions follow the same
 --     NOT VALID -> VALIDATE -> SET NOT NULL pattern used throughout
---     audit_db/02_critical_tenant_and_composite_pk.sql. Each step is
+--     audit_db/03_critical_tenant_and_composite_pk.sql. Each step is
 --     independently guarded (BEGIN/EXCEPTION), so one table's issue
 --     doesn't abort the rest — it logs a NOTICE and is skipped, safe to
 --     re-run after fixing the underlying data.
