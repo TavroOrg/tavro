@@ -24,6 +24,7 @@ const AUTH_KEYS = [
     'tavro_auth_redirect_uri',
     'tavro_oidc_state',
     'tavro_tenant_id',
+    'tavro_user_id',
     'tavro_last_activity_at',
 ];
 
@@ -106,6 +107,28 @@ export function extractAndStoreTenantId(): void {
 }
 
 /**
+ * Derives the stable per-user identifier (Zitadel `sub` claim) from the
+ * current JWT and stores it in localStorage as `tavro_user_id`. Called
+ * alongside extractAndStoreTenantId() so every subsequent API call can
+ * also carry an `x-user-id` header for server-side user preferences.
+ */
+export function extractAndStoreUserId(): void {
+    // Zitadel may issue an opaque (non-JWT) access token — try it first, but
+    // fall back to the id_token (always a real JWT per OIDC) if that yields
+    // nothing, rather than giving up after the first token string found.
+    const accessToken = localStorage.getItem('tavro_access_token');
+    const idToken = localStorage.getItem('tavro_id_token');
+    const payload =
+        (accessToken && parseJwtPayload(accessToken)) ||
+        (idToken && parseJwtPayload(idToken)) ||
+        null;
+    const sub = payload?.['sub'] as string | undefined;
+    if (sub) {
+        localStorage.setItem('tavro_user_id', sub);
+    }
+}
+
+/**
  * True only when the token has passed its actual exp claim with no grace period.
  * Used as the final arbiter for forced logout: if the token is in the 30s
  * pre-emptive window but not actually expired, we keep the user logged in and
@@ -179,6 +202,7 @@ export async function refreshAccessToken(): Promise<boolean> {
             if (typeof data.id_token === 'string') localStorage.setItem('tavro_id_token', data.id_token);
             if (typeof data.refresh_token === 'string') localStorage.setItem('tavro_mcp_refresh_token', data.refresh_token);
             extractAndStoreTenantId();
+            extractAndStoreUserId();
 
             return true;
         } catch {
@@ -198,10 +222,13 @@ export async function refreshAccessToken(): Promise<boolean> {
 export async function getValidToken(): Promise<string | null> {
     if (!isAccessTokenExpired()) {
         const token = localStorage.getItem('tavro_access_token');
-        // Lazily populate tavro_tenant_id for sessions that pre-date the
-        // extractAndStoreTenantId call in AuthCallback / refreshAccessToken.
+        // Lazily populate tavro_tenant_id/tavro_user_id for sessions that pre-date
+        // the extractAndStore* calls in AuthCallback / refreshAccessToken.
         if (token && !localStorage.getItem('tavro_tenant_id')) {
             extractAndStoreTenantId();
+        }
+        if (token && !localStorage.getItem('tavro_user_id')) {
+            extractAndStoreUserId();
         }
         return token;
     }

@@ -13,6 +13,7 @@ import {
     getProviderConfig, saveProviderConfig, clearProviderConfig,
     getActiveProvider, setActiveProvider,
 } from '../services/llmService';
+import { userContextApi } from '../services/userContextApi';
 
 import { useTheme } from '../context/ThemeContext';
 
@@ -45,9 +46,11 @@ const Settings: React.FC = () => {
     const BYOK_DEFAULT_MODELS: Record<ByokType, string> = {
         github: 'gpt-4.1', openai: 'gpt-5.5', azure: 'gpt-4o', anthropic: 'claude-sonnet-4-6',
     };
+    // Unused (dead code) — getModelOptions only reaches this branch when p !== 'copilot',
+    // which never happens since ALL_PROVIDERS only contains 'copilot'.
     const PROVIDER_MODEL_OPTIONS: Partial<Record<LLMProvider, string[]>> = {
-        openai:    ['gpt-4o', 'gpt-5.5'],
-        anthropic: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
+        // openai:    ['gpt-4o', 'gpt-5.5'],
+        // anthropic: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
     };
     const BYOK_MODEL_OPTIONS: Partial<Record<ByokType, string[]>> = {
         openai:    ['gpt-4o', 'gpt-5.5'],
@@ -68,15 +71,35 @@ const Settings: React.FC = () => {
         return base;
     };
     const [providerStates, setProviderStates] = useState<Record<LLMProvider, ProviderState>>(() => ({
-        openai: initProviderState('openai'),
-        gemini: initProviderState('gemini'),
-        anthropic: initProviderState('anthropic'),
+        // openai: initProviderState('openai'),
+        // gemini: initProviderState('gemini'),
+        // anthropic: initProviderState('anthropic'),
         copilot: initProviderState('copilot'),
     }));
     const [activeProvider, setActiveProviderState] = useState<LLMProvider | null>(getActiveProvider);
 
     const updateProvider = (p: LLMProvider, patch: Partial<ProviderState>) =>
         setProviderStates((s: Record<LLMProvider, ProviderState>) => ({ ...s, [p]: { ...s[p], ...patch } }));
+
+    // Cross-device fallback: if this device has no active provider configured locally,
+    // pull the last-saved provider/model/BYOK settings from the server (never the API key).
+    useEffect(() => {
+        if (getActiveProvider()) return;
+        userContextApi.getUserContext().then(ctx => {
+            // Only 'copilot' is a supported top-level provider today — ignore any
+            // stale 'openai'/'gemini'/'anthropic' value a legacy record might hold.
+            if (!ctx.llm_provider || ctx.llm_provider !== 'copilot') return;
+            const p = ctx.llm_provider as LLMProvider;
+            const byok = ctx.llm_byok_type && ctx.llm_byok_type !== 'github'
+                ? { type: ctx.llm_byok_type as 'openai' | 'azure' | 'anthropic', baseUrl: ctx.llm_byok_base_url || undefined }
+                : undefined;
+            saveProviderConfig({ provider: p, model: ctx.llm_model || DEFAULT_MODELS[p], apiKey: '', byok });
+            setActiveProvider(p);
+            setActiveProviderState(p);
+            updateProvider(p, initProviderState(p));
+        }).catch(() => {});
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const handleSaveProvider = (p: LLMProvider) => {
         const s = providerStates[p];
@@ -86,6 +109,14 @@ const Settings: React.FC = () => {
         saveProviderConfig({ provider: p, model: s.model || DEFAULT_MODELS[p], apiKey: '', byok });
         updateProvider(p, { configured: true, saved: true });
         setTimeout(() => updateProvider(p, { saved: false }), 2500);
+        if (activeProvider === p) {
+            userContextApi.patchUserContext({
+                llm_provider: p,
+                llm_model: s.model || DEFAULT_MODELS[p],
+                llm_byok_type: byok?.type ?? null,
+                llm_byok_base_url: byok?.baseUrl ?? null,
+            }).catch(() => {});
+        }
     };
 
     const handleClearProvider = (p: LLMProvider) => {
@@ -97,6 +128,13 @@ const Settings: React.FC = () => {
     const handleSetActive = (p: LLMProvider) => {
         setActiveProvider(p);
         setActiveProviderState(p);
+        const cfg = getProviderConfig(p);
+        userContextApi.patchUserContext({
+            llm_provider: p,
+            llm_model: cfg?.model || DEFAULT_MODELS[p],
+            llm_byok_type: cfg?.byok?.type ?? null,
+            llm_byok_base_url: cfg?.byok?.baseUrl ?? null,
+        }).catch(() => {});
     };
 
     const ThemeOption = ({ mode, label, icon }: { mode: 'light' | 'dark' | 'system'; label: string; icon: React.ReactNode }) => (
@@ -186,7 +224,7 @@ const Settings: React.FC = () => {
                                             <p className="text-[10px] text-slate-400 dark:text-slate-500">
                                                 {s.byokType === 'github' && 'Uses your GitHub Copilot subscription via the local proxy server.'}
                                                 {s.byokType === 'openai' && 'Uses Copilot SDK BYOK with OpenAI or OpenAI-compatible endpoints.'}
-                                                {s.byokType === 'azure' && 'Uses Copilot SDK BYOK with Azure OpenAI. Base URL required.'}
+                                                {s.byokType === 'azure' && 'Uses Copilot SDK BYOK with Azure OpenAI.'}
                                                 {s.byokType === 'anthropic' && 'Uses Copilot SDK BYOK with Anthropic Claude.'}
                                                 {!s.byokType && 'Select how requests are routed.'}
                                             </p>

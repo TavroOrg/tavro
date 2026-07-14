@@ -4,6 +4,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { blueprintApi } from '../services/blueprintApi';
+import { userContextApi } from '../services/userContextApi';
 import type { Company, DimType, DimNode, GraphData } from '../types/blueprint';
 import { toUserMessage } from '../utils/errorUtils';
 
@@ -24,6 +25,9 @@ interface BlueprintState {
   graphLoading: boolean;
   error: string | null;
   lastFetched: Date | null;
+  /** True when the tenant has multiple companies and none could be resolved
+   *  from the server preference or localStorage — the UI should prompt. */
+  needsCompanyPick: boolean;
   /** Switch the active company and reload nodes + graph. */
   selectCompany: (company: Company) => void;
   /** Remove a company from the list and clear state if it was active. */
@@ -42,7 +46,7 @@ interface BlueprintState {
 
 const BlueprintContext = createContext<BlueprintState>({
   companies: [], activeCompany: null, dimTypes: [], nodes: [], graph: null,
-  loading: false, graphLoading: false, error: null, lastFetched: null,
+  loading: false, graphLoading: false, error: null, lastFetched: null, needsCompanyPick: false,
   selectCompany: () => {}, removeCompany: () => {}, refresh: () => {}, refreshGraph: () => {}, refreshNodes: () => {}, refreshCompanies: () => {},
 });
 
@@ -61,6 +65,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [graphLoading,  setGraphLoading]  = useState(false);
   const [error,         setError]         = useState<string | null>(null);
   const [lastFetched,   setLastFetched]   = useState<Date | null>(null);
+  const [needsCompanyPick, setNeedsCompanyPick] = useState(false);
 
   const fetchingRef = useRef(false);
 
@@ -79,17 +84,31 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     (async () => {
       try {
-        const [companies, types] = await Promise.all([
+        const [companies, types, serverContext] = await Promise.all([
           blueprintApi.listAllCompanies(),
           blueprintApi.listDimTypes(),
+          userContextApi.getUserContext().catch(() => null),
         ]);
         setCompanies(companies);
         setDimTypes(types);
 
-        // Restore last-selected company from localStorage
+        // Resolution order: server-side preference -> localStorage -> companies[0].
+        const serverId = serverContext?.default_company_id ?? null;
         const savedId = localStorage.getItem(STORAGE_KEY);
-        const saved = companies.find(c => c.id === savedId) ?? companies[0] ?? null;
-        if (saved) setActiveCompany(saved);
+        const resolved =
+          companies.find(c => c.id === serverId) ??
+          companies.find(c => c.id === savedId) ??
+          null;
+
+        if (resolved) {
+          setActiveCompany(resolved);
+        } else if (companies.length > 1) {
+          // No saved preference anywhere and multiple companies to choose from —
+          // prompt instead of silently landing on companies[0].
+          setNeedsCompanyPick(true);
+        } else if (companies[0]) {
+          setActiveCompany(companies[0]);
+        }
       } catch (err: any) {
         setError(toUserMessage(err));
       }
@@ -131,8 +150,11 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Re-fetch whenever active company changes
   useEffect(() => {
     if (!activeCompany) return;
+    setNeedsCompanyPick(false);
     localStorage.setItem(STORAGE_KEY, activeCompany.id);
     localStorage.setItem(STORAGE_NAME_KEY, activeCompany.name ?? '');
+    // Silent write-back — failure is non-fatal, localStorage remains the fast local cache.
+    userContextApi.patchUserContext({ default_company_id: activeCompany.id }).catch(() => {});
     fetchNodes(activeCompany);
     fetchGraph(activeCompany);
   }, [activeCompany, fetchNodes, fetchGraph]);
@@ -183,7 +205,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   return (
     <BlueprintContext.Provider value={{
       companies, activeCompany, dimTypes, nodes, graph,
-      loading, graphLoading, error, lastFetched,
+      loading, graphLoading, error, lastFetched, needsCompanyPick,
       selectCompany, removeCompany, refresh, refreshGraph, refreshNodes, refreshCompanies: fetchCompanies,
     }}>
       {children}

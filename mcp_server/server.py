@@ -213,6 +213,71 @@ def log_tool_call(
         print(f"[LOG ERROR] Failed to write log for {tool_name}: {e}")
 
 
+async def resolve_company_context(
+    tenant_id: Optional[str],
+    user_id: Optional[str],
+    explicit_company_id: Optional[str],
+) -> Optional[str]:
+    """Resolve the active company for a tool call.
+
+    Order: explicit company_id param -> server-side user preference -> None
+    (global-scoped, an acceptable degraded state for callers with no context).
+    """
+    if explicit_company_id and explicit_company_id.strip():
+        print(f"[resolve_company_context] explicit company_id={explicit_company_id!r}")
+        return explicit_company_id.strip()
+    if not user_id:
+        print("[resolve_company_context] no user_id (sub claim) on token — skipping lookup")
+        return None
+    headers = {"x-user-id": user_id}
+    if tenant_id:
+        headers["x-tenant-id"] = str(tenant_id)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{TAVRO_API_URL}/api/v1/user/context", headers=headers)
+            resp.raise_for_status()
+            resolved = resp.json().get("default_company_id")
+            print(f"[resolve_company_context] user_id={user_id!r} tenant_id={tenant_id!r} -> resolved company_id={resolved!r}")
+            return resolved
+    except Exception as e:
+        print(f"[resolve_company_context] lookup FAILED user_id={user_id!r} tenant_id={tenant_id!r}: {e!r}")
+        return None
+
+
+async def set_default_company(
+    tenant_id: Optional[str],
+    user_id: Optional[str],
+    company_id: str,
+) -> None:
+    """Persist company_id as the caller's default company preference (best-effort).
+
+    Called after create_company so a newly created company always becomes the
+    user's default going forward — whether it's their first company or one of
+    several. Failure here must never fail the company-creation call itself.
+
+    require_tenant on the PATCH endpoint rejects an empty x-tenant-id, and
+    external MCP clients frequently have no tenant_id claim at all (see
+    resolve_company_context's tenant_id=None case) — fall back to user_id as
+    the tenant identifier, mirroring the portal's own org_id -> sub fallback
+    in tavro_app/src/services/auth.ts's extractAndStoreTenantId().
+    """
+    if not user_id or not company_id:
+        return
+    effective_tenant_id = tenant_id or user_id
+    headers = {"x-user-id": user_id, "x-tenant-id": str(effective_tenant_id)}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.patch(
+                f"{TAVRO_API_URL}/api/v1/user/context",
+                json={"default_company_id": company_id},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            print(f"[set_default_company] user_id={user_id!r} -> default_company_id={company_id!r}")
+    except Exception as e:
+        print(f"[set_default_company] FAILED user_id={user_id!r} company_id={company_id!r}: {e!r}")
+
+
 @core.tool(name="get_agent_card")
 async def get_agent_card(original_prompt: str, *, agent_name: Optional[str] = None, agent_id: Optional[str] = None, company_id: Optional[str]) -> Dict[str, Any]:
     """
@@ -247,6 +312,8 @@ async def get_agent_card(original_prompt: str, *, agent_name: Optional[str] = No
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "get_agent_card",
             original_prompt,
@@ -312,6 +379,8 @@ async def get_agent_catalog(original_prompt: str, *, start_record: int = 1, reco
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "get_agent_catalog",
             original_prompt,
@@ -500,6 +569,8 @@ async def create_agent(
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "create_agent",
             original_prompt,
@@ -746,6 +817,8 @@ async def get_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = 
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "get_ai_use_case",
             original_prompt,
@@ -1544,6 +1617,7 @@ async def create_company(original_prompt: str, *, name: str, industry: str, lega
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
 
         log_tool_call(
             "create_company",
@@ -1562,6 +1636,14 @@ async def create_company(original_prompt: str, *, name: str, industry: str, lega
             legal_entity=legal_entity,
             tenant_id=str(tenant_id),
         )
+
+        # Always set the newly created company as the caller's default —
+        # whether it's their first company or an additional one — mirroring
+        # the portal's own behavior (BlueprintSetupPage.tsx calls selectCompany()
+        # right after creation, which triggers the same default_company_id write-back).
+        new_company_id = result.get("company_id")
+        if new_company_id:
+            await set_default_company(tenant_id, user_id, new_company_id)
 
         return result
 
@@ -2583,6 +2665,8 @@ async def get_application_catalog(original_prompt: str, *, start_record: int = 1
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
 
         log_tool_call(
             "get_application_catalog",
@@ -2629,6 +2713,8 @@ async def get_application(original_prompt: str, *, application_id: str, company_
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call("get_application", original_prompt, {"application_id": application_id, "company_id": company_id}, tenant_id)
 
         headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
@@ -2718,6 +2804,8 @@ async def create_application(
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "create_application",
             original_prompt,
@@ -2931,6 +3019,8 @@ async def get_process_catalog(original_prompt: str, *, start_record: int = 1, re
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
 
         log_tool_call(
             "get_process_catalog",
@@ -2977,6 +3067,8 @@ async def get_process(original_prompt: str, *, process_id: str, company_id: Opti
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call("get_process", original_prompt, {"process_id": process_id, "company_id": company_id}, tenant_id)
 
         headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
@@ -3057,6 +3149,8 @@ async def create_process(
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "create_process",
             original_prompt,
@@ -3255,6 +3349,8 @@ async def list_integrations(
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "list_integrations",
             original_prompt,
@@ -3304,6 +3400,8 @@ async def get_integration(original_prompt: str, *, integration_id: str, company_
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call("get_integration", original_prompt, {"integration_id": integration_id, "company_id": company_id}, tenant_id)
 
         headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
@@ -3385,6 +3483,8 @@ async def create_integration(
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "create_integration",
             original_prompt,
@@ -3486,6 +3586,8 @@ async def update_integration(
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call("update_integration", original_prompt, {"integration_id": integration_id}, tenant_id)
 
         payload: Dict[str, Any] = {}

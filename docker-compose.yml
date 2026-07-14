@@ -555,7 +555,7 @@ services:
       TAVRO_RUNTIME_CONFIG_FILE: /app/runtime/tavro-runtime-config.json
       ZITADEL_CLIENT_ID: ${ZITADEL_CLIENT_ID:-}
       ZITADEL_REDIRECT_PATH: ${ZITADEL_REDIRECT_PATH:-/auth/callback}
-      ZITADEL_SCOPES: ${ZITADEL_SCOPES:-openid profile email}
+      ZITADEL_SCOPES: ${ZITADEL_SCOPES:-openid profile email urn:zitadel:iam:user:resourceowner}
       VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
       VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
       TAVRO_API_URL:             ${TAVRO_API_URL}

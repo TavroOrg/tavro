@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
-import { extractAndStoreTenantId, recordSessionActivity } from '../services/auth';
+import { extractAndStoreTenantId, extractAndStoreUserId, recordSessionActivity } from '../services/auth';
 
 const AuthCallback: React.FC = () => {
     const navigate = useNavigate();
@@ -73,6 +73,7 @@ const AuthCallback: React.FC = () => {
                 localStorage.removeItem('tavro_tenant_id');
             }
             localStorage.setItem('tavro_auth', 'true');
+            extractAndStoreUserId();
             recordSessionActivity();
             setStatus('success');
             setMessage('Authentication successful! Redirecting...');
@@ -174,6 +175,7 @@ const AuthCallback: React.FC = () => {
                         localStorage.removeItem('tavro_pkce_verifier');
                         localStorage.removeItem('tavro_oidc_state');
                         localStorage.setItem('tavro_auth', 'true');
+                        extractAndStoreUserId();
                         recordSessionActivity();
 
                         setStatus('success');
@@ -258,6 +260,7 @@ const AuthCallback: React.FC = () => {
                         localStorage.setItem('tavro_auth', 'true');
                         recordSessionActivity();
                         extractAndStoreTenantId();
+                        extractAndStoreUserId();
                         sessionStorage.removeItem('tavro_catalog_agents_cache');
                         sessionStorage.removeItem('tavro_catalog_agents_cache_ts');
                         sessionStorage.removeItem('tavro_catalog_usecases_cache');
