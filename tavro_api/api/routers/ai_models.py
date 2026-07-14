@@ -538,7 +538,7 @@ async def get_ai_model(
     company_id: Optional[str] = Query(default=None, description="Filter related items by company"),
     db: AsyncSession = Depends(get_db),
 ):
-    tenant_id = _tenant(request)
+    tenant_id = _require_tenant(request)
     mid = _norm_id(ai_model_id)
     tenant_filter = "AND m.tenant_id = :tid" if tenant_id else ""
     row = await db.execute(

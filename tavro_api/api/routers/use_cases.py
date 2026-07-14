@@ -644,7 +644,7 @@ async def create_use_case(
 
 @router.get("/{use_case_id}", summary="Get AI Use Case")
 async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = Depends(get_db), company_id: Optional[str] = Query(default=None)):
-    tenant_id = _tenant(request)
+    tenant_id = _require_tenant(request)
     normalized_use_case_id = _norm_id(use_case_id)
     use_case_tenant_filter = (
         "AND u.tenant_id = :tid"
