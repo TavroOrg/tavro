@@ -17,7 +17,7 @@ services:
       context: .
       dockerfile: Dockerfile.postgres.${BUILD_MODE:-oss}
       additional_contexts:
-        - enterprise=../enterprise
+        - enterprise=${ENTERPRISE_CONTEXT_PATH:-.}
       args:
         AGE_VERSION: "1.5.0"
         PG_MAJOR: "16"
@@ -81,7 +81,7 @@ services:
       context: .
       dockerfile: Dockerfile.api.${BUILD_MODE:-oss}
       additional_contexts:
-        - enterprise=../enterprise
+        - enterprise=${ENTERPRISE_CONTEXT_PATH:-.}
     container_name: tavro-api
     restart: unless-stopped
     deploy:
@@ -243,7 +243,7 @@ services:
       context: .
       dockerfile: Dockerfile.app.${BUILD_MODE:-oss}
       additional_contexts:
-        - enterprise=../enterprise
+        - enterprise=${ENTERPRISE_CONTEXT_PATH:-.}
       args:
         VITE_TWIN_API_URL: ""   # empty = use relative /api/ paths via nginx proxy
         VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
@@ -530,7 +530,7 @@ services:
       context: .
       dockerfile: Dockerfile.mcp.${BUILD_MODE:-oss}
       additional_contexts:
-        - enterprise=../enterprise
+        - enterprise=${ENTERPRISE_CONTEXT_PATH:-.}
     container_name: risk-mcp-server
     restart: unless-stopped
     deploy:
