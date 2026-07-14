@@ -454,7 +454,9 @@ def _profile_dimension_hint(categories: List[str], category_labels: Dict[str, st
 # SQL
 # ---------------------------------------------------------------------------
 
-_AGENTS_SQL = f"""
+def _build_agents_sql(has_core_company_id: bool) -> str:
+    core_company_expr = "ca.company_id" if has_core_company_id else "NULL::text AS company_id"
+    return f"""
 WITH agent_universe AS (
     -- Same row set as GET /agents/ (get_agent_catalog): curated.agent_360 rows,
     -- plus any core.agents rows not yet synced into the curated view.
@@ -466,13 +468,12 @@ WITH agent_universe AS (
     UNION ALL
 
     SELECT ca.agent_id, ca.agent_internal_id, ca.agent_name,
-           ca.tenant_id, ca.company_id
+           ca.tenant_id, {core_company_expr}
     FROM {CORE}.agents ca
+    LEFT JOIN {CURATED}.agent_360 a360x ON a360x.agent_id = ca.agent_id
     WHERE COALESCE(ca.is_current, TRUE) = TRUE
       AND (ca.tenant_id = :tid OR ca.tenant_id IS NULL)
-      AND NOT EXISTS (
-          SELECT 1 FROM {CURATED}.agent_360 a360x WHERE a360x.agent_id = ca.agent_id
-      )
+      AND a360x.agent_id IS NULL
 )
 SELECT
     au.agent_id,
@@ -503,6 +504,7 @@ FROM agent_universe au
 LEFT JOIN {CORE}.agents a
   ON a.agent_id = au.agent_id AND a.agent_internal_id = au.agent_internal_id
  AND COALESCE(a.is_current, TRUE) = TRUE
+ AND (a.tenant_id = au.tenant_id OR (a.tenant_id IS NULL AND au.tenant_id IS NULL))
 LEFT JOIN LATERAL (
     SELECT environment, governance_status
     FROM {CORE}.agent_identifications
@@ -541,8 +543,10 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT agent_internal_id, COUNT(*)::int AS cnt FROM {CORE}.agent_business_applications GROUP BY agent_internal_id
 ) ba ON ba.agent_internal_id = au.agent_internal_id
+-- anchor for the "AND (...)" company_id filter get_insights_summary appends onto this string
 WHERE TRUE
 """
+
 
 _USECASES_SQL = f"""
 SELECT ai_use_case_id, name, status, created_ts, updated_ts
@@ -600,9 +604,24 @@ async def get_insights_summary(
 ):
     tenant_id = _require_tenant(request)
     cid = company_id.strip() if company_id and company_id.strip() else None
-    agent_sql = _AGENTS_SQL
-    usecase_sql = _USECASES_SQL
     params: Dict[str, Any] = {"tid": tenant_id}
+
+    has_core_company_id = False
+    try:
+        core_col_check = await db.execute(
+            text("""
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = :schema AND table_name = :tbl AND column_name = 'company_id'
+                LIMIT 1
+            """),
+            {"schema": CORE, "tbl": "agents"},
+        )
+        has_core_company_id = bool(core_col_check.first())
+    except Exception:
+        pass
+
+    agent_sql = _build_agents_sql(has_core_company_id)
+    usecase_sql = _USECASES_SQL
 
     if cid:
         params["cid"] = cid
