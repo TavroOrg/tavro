@@ -119,7 +119,7 @@ const Layout: React.FC = () => {
     const [showLogs] = useShowLogs();
     const { agents } = useCatalog();
     const { useCases } = useUseCases();
-    const { activeCompany } = useBlueprint();
+    const { activeCompany, companiesLoaded } = useBlueprint();
     const { enterpriseEnabled } = useEnterprise();
     const [appCount, setAppCount] = useState(0);
     const [processCount, setProcessCount] = useState(0);
@@ -142,6 +142,7 @@ const Layout: React.FC = () => {
     }, [activeCompany]);
 
     const fetchCatalogCounts = useCallback(() => {
+        if (!companiesLoaded) return;
         const companyId = activeCompany?.id;
         Promise.allSettled([
             businessRelationsApi.countApplications(companyId),
@@ -161,7 +162,7 @@ const Layout: React.FC = () => {
         if (companyId) {
             sparkApi.getIdeas(companyId).then(ideas => setSparkCount(ideas.length)).catch(() => {});
         }
-    }, [activeCompany]);
+    }, [activeCompany, companiesLoaded]);
 
     useEffect(() => {
         fetchCatalogCounts();

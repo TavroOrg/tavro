@@ -17,7 +17,7 @@ const UseCasePage: React.FC = () => {
     const [page, setPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
     const [showLoadModal, setShowLoadModal] = useState(false);
-    const { activeCompany } = useBlueprint();
+    const { activeCompany, companiesLoaded } = useBlueprint();
     const [allUseCases, setAllUseCases] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -63,7 +63,10 @@ const UseCasePage: React.FC = () => {
         }
     }, [activeCompany?.id]);
 
-    useEffect(() => { loadUseCases(); }, [loadUseCases]);
+    useEffect(() => {
+        if (!companiesLoaded) return;
+        loadUseCases();
+    }, [loadUseCases, companiesLoaded]);
 
     useEffect(() => {
         const incomingPage = Number((location.state as any)?.page);

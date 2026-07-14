@@ -57,7 +57,7 @@ const getCriticalityMeta = (criticality: string | null | undefined) => {
 const BusinessApplicationsPage: React.FC = () => {
   const navigate = useNavigate();
   const { loading: catalogLoading, error: catalogError, lastFetched } = useCatalog();
-  const { activeCompany } = useBlueprint();
+  const { activeCompany, companiesLoaded } = useBlueprint();
   const [applications, setApplications] = useState<BusinessApplicationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +67,8 @@ const BusinessApplicationsPage: React.FC = () => {
   const [showLoadModal, setShowLoadModal] = useState(false);
 
   useEffect(() => {
+    if (!companiesLoaded) return;
+
     if (catalogLoading) {
       setLoading(true);
       return;
@@ -96,7 +98,7 @@ const BusinessApplicationsPage: React.FC = () => {
       }
     };
     load();
-  }, [catalogLoading, catalogError, lastFetched, activeCompany?.id]);
+  }, [catalogLoading, catalogError, lastFetched, activeCompany?.id, companiesLoaded]);
 
   const reload = () => {
     businessRelationsApi.listApplications(undefined, activeCompany?.id).then(setApplications).catch(() => {});
