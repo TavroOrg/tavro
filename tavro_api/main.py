@@ -16,6 +16,7 @@ from temporalio.worker import Worker
 from temporalio.client import Client
 
 from api.routers import companies, dim_types, dim_nodes, dim_edges, source_refs, graph, datahub_context
+from api.routers import enterprise_metadata
 from api.routers.dim_types import seed_system_dim_types
 from api.routers.spark import ensure_spark_table
 from api.routers import blueprint
@@ -181,6 +182,7 @@ app.include_router(dim_edges.router,   prefix="/api/v1/dim-edges",   tags=["Dime
 app.include_router(source_refs.router, prefix="/api/v1/source-refs", tags=["Source References"])
 app.include_router(graph.router,       prefix="/api/v1/graph",       tags=["Graph"])
 app.include_router(datahub_context.router, prefix="/api/v1/datahub-context", tags=["DataHub Context"])
+app.include_router(enterprise_metadata.router, prefix="/api/enterprise-metadata", tags=["Enterprise Metadata"])
 app.include_router(blueprint.router,   prefix="/api/v1/blueprint",   tags=["Blueprint"])
 app.include_router(playground.router,  prefix="/api/v1/playground",  tags=["Playground"])
 # ── Govern module (enterprise-only) ──────────────────────────────────────────
