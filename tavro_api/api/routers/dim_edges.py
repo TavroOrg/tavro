@@ -125,12 +125,14 @@ async def create_dim_edge(body: DimEdgeCreate, tenant_id: str = Depends(require_
     row = await db.execute(
         text("""
             INSERT INTO twin.dim_edge
-                (source_id, target_id, rel_type, weight, meta)
+                (tenant_id, company_id, source_id, target_id, rel_type, weight, meta)
             VALUES
-                (:source_id, :target_id, :rel_type, :weight, cast(:meta as jsonb))
+                (:tenant_id, (SELECT company_id FROM twin.dim_node WHERE id = :source_id),
+                 :source_id, :target_id, :rel_type, :weight, cast(:meta as jsonb))
             RETURNING *
         """),
         {
+            "tenant_id": tenant_id,
             "source_id": str(body.source_id),
             "target_id": str(body.target_id),
             "rel_type":  body.rel_type,

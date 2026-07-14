@@ -108,17 +108,10 @@ async def _refresh_use_case_rollup(db: AsyncSession, use_case_id: str, tenant_id
                 SELECT brs.agent_internal_id, brs.blended_risk_score
                 FROM {CORE}.agent_ai_use_cases rel
                 JOIN LATERAL (
-                    SELECT ara.agent_internal_id, ara.blended_risk_score
+                    SELECT ara.agent_id AS agent_internal_id, ara.blended_risk_score
                     FROM {CORE}.agent_risk_assessments ara
                     WHERE ara.blended_risk_score IS NOT NULL
-                      AND (
-                        ara.agent_id = rel.agent_id
-                        OR (
-                            rel.agent_internal_id IS NOT NULL
-                            AND rel.agent_internal_id <> ''
-                            AND ara.agent_internal_id = rel.agent_internal_id
-                        )
-                      )
+                      AND ara.agent_id = rel.agent_id
                     ORDER BY
                         CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
                         ara.assessment_ts DESC NULLS LAST,
@@ -150,7 +143,7 @@ async def _refresh_use_case_rollup(db: AsyncSession, use_case_id: str, tenant_id
                 f"""
                 SELECT type_of_risk, risk_classification, risk_classification_score
                 FROM {RISK_MANAGEMENT}.agent_risk_assessment
-                WHERE agent_internal_id = :aid
+                WHERE agent_id = :aid
                   AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                 ORDER BY created_ts DESC NULLS LAST
                 """
@@ -424,9 +417,7 @@ async def list_use_cases(
     _has_company = "company_id" in params
     _agent_cnt_join = (
         f"""JOIN {CORE}.agents ag
-                ON (rel.agent_id IS NOT NULL AND rel.agent_id <> '' AND ag.agent_id = rel.agent_id)
-                OR (rel.agent_internal_id IS NOT NULL AND rel.agent_internal_id <> ''
-                    AND ag.agent_internal_id = rel.agent_internal_id)"""
+                ON ag.agent_id = rel.agent_id"""
         if _has_company else ""
     )
     _agent_cnt_cf = (
@@ -455,16 +446,11 @@ async def list_use_cases(
                 FROM {CORE}.agent_ai_use_cases rel2
                 JOIN {CORE}.agents ag2
                     ON ag2.agent_id = rel2.agent_id
-                    OR ag2.agent_internal_id = rel2.agent_internal_id
                 JOIN LATERAL (
-                    SELECT ara.agent_internal_id, ara.blended_risk_score
+                    SELECT ara.agent_id AS agent_internal_id, ara.blended_risk_score
                     FROM {CORE}.agent_risk_assessments ara
                     WHERE ara.blended_risk_score IS NOT NULL
-                      AND (
-                        ara.agent_id = rel2.agent_id
-                        OR (rel2.agent_internal_id IS NOT NULL AND rel2.agent_internal_id <> ''
-                            AND ara.agent_internal_id = rel2.agent_internal_id)
-                      )
+                      AND ara.agent_id = rel2.agent_id
                     ORDER BY
                         CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
                         ara.assessment_ts DESC NULLS LAST,
@@ -472,8 +458,8 @@ async def list_use_cases(
                     LIMIT 1
                 ) brs ON TRUE
                 WHERE LOWER(TRIM(rel2.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
-                  AND COALESCE(rel2.agent_id, rel2.agent_internal_id) IS NOT NULL
-                  AND COALESCE(rel2.agent_id, rel2.agent_internal_id) <> ''
+                  AND rel2.agent_id IS NOT NULL
+                  AND rel2.agent_id <> ''
                   {_risk_tf}
                   {_risk_cf}
                 ORDER BY brs.blended_risk_score DESC NULLS LAST
@@ -513,22 +499,22 @@ async def list_use_cases(
                         {_are_expr},
                         {_art_expr}
                         COALESCE((
-                            SELECT COUNT(DISTINCT COALESCE(rel.agent_id, rel.agent_internal_id))
+                            SELECT COUNT(DISTINCT rel.agent_id)
                             FROM {CORE}.agent_ai_use_cases rel
                             {_agent_cnt_join}
                             WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
-                              AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
-                              AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+                              AND rel.agent_id IS NOT NULL
+                              AND rel.agent_id <> ''
                               {"AND rel.tenant_id = :tid" if tenant_id else ""}
                               {_agent_cnt_cf}
                         ), 0) AS related_agent_count,
                         COALESCE((
-                            SELECT COUNT(DISTINCT COALESCE(rel.agent_id, rel.agent_internal_id))
+                            SELECT COUNT(DISTINCT rel.agent_id)
                             FROM {CORE}.agent_ai_use_cases rel
                             {_agent_cnt_join}
                             WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
-                              AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
-                              AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+                              AND rel.agent_id IS NOT NULL
+                              AND rel.agent_id <> ''
                               {"AND rel.tenant_id = :tid" if tenant_id else ""}
                               {_agent_cnt_cf}
                         ), 0) AS no_of_associated_agents,
@@ -739,7 +725,6 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
             _agent_join = f"""
                 JOIN {CORE}.agents ag
                     ON ag.agent_id = rel.agent_id
-                    OR ag.agent_internal_id = rel.agent_internal_id
             """
             _ci_agent = (
                 " OR ag.company_id IS NULL OR TRIM(CAST(ag.company_id AS text)) = ''"
@@ -756,12 +741,12 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
 
             cnt_row = await db.execute(
                 text(f"""
-                    SELECT COUNT(DISTINCT COALESCE(rel.agent_id, rel.agent_internal_id))::int AS cnt
+                    SELECT COUNT(DISTINCT rel.agent_id)::int AS cnt
                     FROM {CORE}.agent_ai_use_cases rel
                     {_agent_join}
                     WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
-                      AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
-                      AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+                      AND rel.agent_id IS NOT NULL
+                      AND rel.agent_id <> ''
                       {_rel_cf}
                       {_rel_tf}
                 """),
@@ -782,14 +767,11 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                         FROM {CORE}.agent_ai_use_cases rel
                         {_agent_join}
                         JOIN LATERAL (
-                            SELECT COALESCE(ara.agent_internal_id, ag.agent_internal_id, rel.agent_internal_id) AS agent_internal_id,
+                            SELECT rel.agent_id AS agent_internal_id,
                                    ara.blended_risk_score
                             FROM {CORE}.agent_risk_assessments ara
                             WHERE ara.blended_risk_score IS NOT NULL
-                              AND (
-                                ara.agent_id = rel.agent_id
-                                OR ara.agent_internal_id = rel.agent_internal_id
-                              )
+                              AND ara.agent_id = rel.agent_id
                             ORDER BY
                                 CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
                                 ara.assessment_ts DESC NULLS LAST,
@@ -797,8 +779,8 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                             LIMIT 1
                         ) brs ON TRUE
                         WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
-                          AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
-                          AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+                          AND rel.agent_id IS NOT NULL
+                          AND rel.agent_id <> ''
                           {_rel_cf}
                           {_rel_tf}
                         ORDER BY brs.blended_risk_score DESC NULLS LAST
@@ -826,7 +808,7 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                         text(f"""
                             SELECT type_of_risk, risk_classification, risk_classification_score
                             FROM {RISK_MANAGEMENT}.agent_risk_assessment
-                            WHERE agent_internal_id = :aid
+                            WHERE agent_id = :aid
                               AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                             ORDER BY created_ts DESC NULLS LAST
                         """),
@@ -853,10 +835,10 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                     ai.environment
                 FROM {CORE}.agent_ai_use_cases rel
                 LEFT JOIN {CORE}.agents ag
-                    ON (ag.agent_id = rel.agent_id OR ag.agent_internal_id = rel.agent_internal_id)
+                    ON ag.agent_id = rel.agent_id
                     AND ag.is_current = true
                 LEFT JOIN {CORE}.agent_identifications ai
-                    ON ai.agent_internal_id = rel.agent_internal_id
+                    ON ai.agent_id = rel.agent_id
                     AND COALESCE(ai.is_current, true) = true
                 WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid)) AND rel.agent_id IS NOT NULL
                   {agent_tenant_filter}
@@ -1207,7 +1189,7 @@ async def delete_use_case(use_case_id: str, db: AsyncSession = Depends(get_db)):
             {"uid": use_case_id},
         )
         await db.execute(
-            text("DELETE FROM public.use_case_attachment WHERE use_case_id = :uid"),
+            text("DELETE FROM core.use_case_attachment WHERE use_case_id = :uid"),
             {"uid": use_case_id},
         )
         await db.execute(
@@ -1271,13 +1253,12 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
 
         agent_tenant_filter = "AND tenant_id = :tid" if tenant_id else ""
         agent_row = await db.execute(
-            text(f"SELECT agent_internal_id, agent_name FROM {CORE}.agents WHERE agent_id = :aid AND is_current = true {agent_tenant_filter} LIMIT 1"),
+            text(f"SELECT agent_name FROM {CORE}.agents WHERE agent_id = :aid AND is_current = true {agent_tenant_filter} LIMIT 1"),
             {"aid": agent_id, "tid": tenant_id},
         )
         agent = agent_row.mappings().first()
         if not agent:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
-        agent_internal_id = str(agent["agent_internal_id"])
         agent_name = str(agent.get("agent_name") or "")
 
         dup = await db.execute(
@@ -1302,14 +1283,13 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
             text(
                 f"""
                 INSERT INTO {CORE}.agent_ai_use_cases
-                    (tenant_id, company_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts)
+                    (tenant_id, company_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name, created_ts, updated_ts)
                 VALUES
-                    (:tid, :cid, :uid, :uname, :aid, :aname, :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (:tid, :cid, :uid, :uname, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (tenant_id, ai_use_case_id, agent_id)
                 DO UPDATE SET
                     ai_use_case_name = EXCLUDED.ai_use_case_name,
                     agent_name = EXCLUDED.agent_name,
-                    agent_internal_id = EXCLUDED.agent_internal_id,
                     updated_ts = EXCLUDED.updated_ts
                 """
             ),
@@ -1320,7 +1300,6 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
                 "uname": str(use_case.get("name") or normalized_use_case_id),
                 "aid": agent_id,
                 "aname": agent_name,
-                "iid": agent_internal_id,
             },
         )
 
@@ -1871,7 +1850,7 @@ async def list_use_case_attachments(use_case_id: str, db: AsyncSession = Depends
         text(
             """
             SELECT id, use_case_id, filename, mime_type, file_size_bytes, created_at, updated_at
-            FROM public.use_case_attachment
+            FROM core.use_case_attachment
             WHERE use_case_id = :use_case_id
             ORDER BY created_at DESC
             """
@@ -1905,10 +1884,12 @@ async def create_use_case_attachment(
     row = await db.execute(
         text(
             """
-            INSERT INTO public.use_case_attachment
-                (use_case_id, filename, mime_type, file_size_bytes, file_data)
+            INSERT INTO core.use_case_attachment
+                (tenant_id, company_id, use_case_id, filename, mime_type, file_size_bytes, file_data)
             VALUES
-                (:use_case_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                ((SELECT tenant_id FROM core.ai_use_cases WHERE ai_use_case_id = :use_case_id),
+                 (SELECT company_id FROM core.ai_use_cases WHERE ai_use_case_id = :use_case_id),
+                 :use_case_id, :filename, :mime_type, :file_size_bytes, :file_data)
             RETURNING id, use_case_id, filename, mime_type, file_size_bytes, created_at, updated_at
             """
         ),
@@ -1934,7 +1915,7 @@ async def download_use_case_attachment(
         text(
             """
             SELECT filename, mime_type, file_data
-            FROM public.use_case_attachment
+            FROM core.use_case_attachment
             WHERE id = :attachment_id
               AND use_case_id = :use_case_id
             LIMIT 1
@@ -1964,7 +1945,7 @@ async def delete_use_case_attachment(
     result = await db.execute(
         text(
             """
-            DELETE FROM public.use_case_attachment
+            DELETE FROM core.use_case_attachment
             WHERE id = :attachment_id
               AND use_case_id = :use_case_id
             """
@@ -2118,10 +2099,12 @@ async def generate_use_case_report(
     try:
         row = await db.execute(
             text("""
-                INSERT INTO public.use_case_attachment
-                    (use_case_id, filename, mime_type, file_size_bytes, file_data)
+                INSERT INTO core.use_case_attachment
+                    (tenant_id, company_id, use_case_id, filename, mime_type, file_size_bytes, file_data)
                 VALUES
-                    (:use_case_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                    ((SELECT tenant_id FROM core.ai_use_cases WHERE ai_use_case_id = :use_case_id),
+                     (SELECT company_id FROM core.ai_use_cases WHERE ai_use_case_id = :use_case_id),
+                     :use_case_id, :filename, :mime_type, :file_size_bytes, :file_data)
                 RETURNING id, use_case_id, filename, mime_type, file_size_bytes, created_at, updated_at
             """),
             {

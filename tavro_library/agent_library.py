@@ -719,8 +719,7 @@ class AgentMetadataExporter:
                     COUNT(*) OVER () AS total_records
                 FROM {cls.CURATED_DB_NAME}.agent_360 a360
                 LEFT JOIN {cls.CORE_DB_NAME}.agents ag
-                    ON ag.agent_internal_id = a360.agent_internal_id
-                    AND ag.agent_id = a360.agent_id
+                    ON ag.agent_id = a360.agent_id
                     AND COALESCE(ag.is_current, TRUE) = TRUE
                     AND (
                         ag.tenant_id = a360.tenant_id
@@ -1103,7 +1102,7 @@ class AgentMetadataExporter:
         Trigger a risk assessment run for an existing agent by agent_id.
 
         Data is sourced from core tables:
-          - core_database.agents (agent_internal_id, agent_name, agent_description)
+          - core_database.agents (agent_id, agent_name, agent_description)
           - core_database.agent_identifications (instruction)
 
         The tool reuses the existing /classify-risk pipeline by posting a payload
@@ -1120,7 +1119,6 @@ class AgentMetadataExporter:
 
         query = f"""
             SELECT
-                a.agent_internal_id,
                 a.agent_id,
                 a.agent_name,
                 a.agent_description,
@@ -1128,8 +1126,7 @@ class AgentMetadataExporter:
                 i.instruction
             FROM {cls.CORE_DB_NAME}.agents a
             LEFT JOIN {cls.CORE_DB_NAME}.agent_identifications i
-                ON a.agent_internal_id = i.agent_internal_id
-                AND a.agent_id = i.agent_id
+                ON a.agent_id = i.agent_id
                 AND i.is_current = true
                 {where_clause}
             WHERE a.agent_id = '{agent_id_clean}'
@@ -1143,7 +1140,7 @@ class AgentMetadataExporter:
             return {"error": "NOT_FOUND", "details": f"No agent found with id '{agent_id}'"}
 
         row = rows[0]
-        agent_internal_id = row.get("agent_internal_id") or ""
+        agent_internal_id = row.get("agent_id") or ""
         agent_name = row.get("agent_name") or ""
         agent_description = row.get("agent_description") or ""
         agent_instructions = row.get("instruction") or ""
@@ -1430,7 +1427,7 @@ class AgentMetadataExporter:
         company_name = cls.sanitize(str(company_name).strip()) if company_name else None
 
         agent_id = str(uuid.uuid4())
-        agent_internal_id = str(uuid.uuid4())
+        agent_internal_id = agent_id
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         provider = "MCP Server"
 
@@ -1454,7 +1451,6 @@ class AgentMetadataExporter:
         queries.append(f"""
         INSERT INTO {cls.CORE_DB_NAME}.agents (
             {tenant_id_column}
-            agent_internal_id,
             agent_id,
             agent_name,
             agent_description,
@@ -1467,7 +1463,6 @@ class AgentMetadataExporter:
         )
         VALUES (
              {tenant_id_value}
-            '{agent_internal_id}',
             '{agent_id}',
             '{agent_name}',
             '{description}',
@@ -1484,8 +1479,8 @@ class AgentMetadataExporter:
         queries.append(f"""
         INSERT INTO {cls.CORE_DB_NAME}.agent_identifications (
             {tenant_id_column}
-            agent_internal_id,
             agent_id,
+            company_id,
             instruction,
             created_ts,
             updated_ts,
@@ -1493,8 +1488,8 @@ class AgentMetadataExporter:
         )
         VALUES (
              {tenant_id_value}
-            '{agent_internal_id}',
             '{agent_id}',
+            {company_id_value}
             '{instruction}',
             TIMESTAMP '{now}',
             TIMESTAMP '{now}',
@@ -1528,7 +1523,7 @@ class AgentMetadataExporter:
                 relation_values.append(f"""
                 (
                     {tenant_id_value}
-                    '{agent_internal_id}',
+                    {company_id_value}
                     '{tool_id}',
                     '{agent_id}',
                     '{cls.sanitize(agent_name)}',
@@ -1541,7 +1536,7 @@ class AgentMetadataExporter:
                 data_source_values.append(f"""
                 (
                     {tenant_id_value}
-                    '{agent_internal_id}',
+                    {company_id_value}
                     '{agent_id}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}',
@@ -1574,7 +1569,7 @@ class AgentMetadataExporter:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.agent_tools (
                 {tenant_id_column}
-                agent_internal_id,
+                company_id,
                 tool_id,
                 agent_id,
                 agent_name,
@@ -1584,7 +1579,7 @@ class AgentMetadataExporter:
             )
             VALUES
             {",".join(relation_values)}
-            ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
+            ON CONFLICT (agent_id, tool_id) DO UPDATE SET
                 agent_id   = EXCLUDED.agent_id,
                 agent_name = EXCLUDED.agent_name,
                 tool_name  = EXCLUDED.tool_name,
@@ -1618,9 +1613,9 @@ class AgentMetadataExporter:
             agent_table_values.append(f"""
             (
                 {tenant_id_value}
+                {company_id_value}
                 '{agent_id}',
                 '{agent_name}',
-                '{agent_internal_id}',
                 '{table_id}',
                 '{table_name}',
                 TIMESTAMP '{now}',
@@ -1632,7 +1627,7 @@ class AgentMetadataExporter:
                 data_source_values.append(f"""
                 (
                     {tenant_id_value}
-                    '{agent_internal_id}',
+                    {company_id_value}
                     '{agent_id}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}',
@@ -1648,6 +1643,7 @@ class AgentMetadataExporter:
                 tool_table_values.append(f"""
                 (
                     {tenant_id_value}
+                    {company_id_value}
                     '{table_tool_id}',
                     '{table_tool_name}',
                     '{table_id}',
@@ -1660,7 +1656,7 @@ class AgentMetadataExporter:
                 data_source_values.append(f"""
                 (
                     {tenant_id_value}
-                    '{agent_internal_id}',
+                    {company_id_value}
                     '{agent_id}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}',
@@ -1692,6 +1688,7 @@ class AgentMetadataExporter:
                 table_column_values.append(f"""
                 (
                     {tenant_id_value}
+                    {company_id_value}
                     '{table_id}',
                     '{table_name}',
                     '{clean_column}',
@@ -1703,7 +1700,7 @@ class AgentMetadataExporter:
                 data_source_values.append(f"""
                 (
                     {tenant_id_value}
-                    '{agent_internal_id}',
+                    {company_id_value}
                     '{agent_id}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}',
@@ -1745,9 +1742,8 @@ class AgentMetadataExporter:
                     f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
                 )
                 issue_rows_ai.append(
-                    f"({tenant_id_value}'{identifier}', '{i_title}', "
+                    f"({tenant_id_value}{company_id_value}'{identifier}', '{i_title}', "
                     f"'{agent_id}', '{agent_name}', "
-                    f"'{agent_internal_id}', "
                     f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
                 )
                 issue_entries_for_card.append({
@@ -1778,9 +1774,8 @@ class AgentMetadataExporter:
                 """)
                 queries.append(f"""
                 INSERT INTO {cls.CORE_DB_NAME}.agent_issues (
-                    {tenant_id_column}issue_id, title,
+                    {tenant_id_column}company_id, issue_id, title,
                     agent_id, agent_name,
-                    agent_internal_id,
                     created_ts, updated_ts
                 )
                 VALUES {','.join(issue_rows_ai)}
@@ -1820,7 +1815,8 @@ class AgentMetadataExporter:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.agent_tables (
                 {tenant_id_column}
-                agent_id, agent_name, agent_internal_id,
+                company_id,
+                agent_id, agent_name,
                 table_id, table_name, created_ts, updated_ts
             )
             VALUES
@@ -1831,6 +1827,7 @@ class AgentMetadataExporter:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.tool_tables (
                 {tenant_id_column}
+                company_id,
                 tool_id, tool_name, table_id, table_name,
                 created_ts, updated_ts
             )
@@ -1842,6 +1839,7 @@ class AgentMetadataExporter:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.table_columns (
                 {tenant_id_column}
+                company_id,
                 table_id, table_name, column_name, column_id, created_ts, updated_ts
             )
             VALUES
@@ -1855,7 +1853,7 @@ class AgentMetadataExporter:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources (
                 {tenant_id_column}
-                agent_internal_id,
+                company_id,
                 agent_id,
                 name,
                 description,
@@ -1864,7 +1862,7 @@ class AgentMetadataExporter:
             )
             VALUES (
                 {tenant_id_value}
-                '{agent_internal_id}',
+                {company_id_value}
                 '{agent_id}',
                 '{ks_name}',
                 '{ks_desc}',
@@ -1877,7 +1875,7 @@ class AgentMetadataExporter:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources (
                 {tenant_id_column}
-                agent_internal_id,
+                company_id,
                 agent_id,
                 created_ts,
                 updated_ts,
@@ -1956,13 +1954,12 @@ class AgentMetadataExporter:
 
                 queries.append(f"""
                 INSERT INTO {cls.CORE_DB_NAME}.agent_skills (
-                    tenant_id, skill_id, skill_name, agent_id, agent_name,
-                    agent_internal_id, created_ts, updated_ts
+                    tenant_id, company_id, skill_id, skill_name, agent_id, agent_name,
+                    created_ts, updated_ts
                 )
                 VALUES (
-                    {tenant_id_lit}, '{sid}', '{sname}',
+                    {tenant_id_lit}, {company_id_lit}, '{sid}', '{sname}',
                     '{agent_id}', '{agent_name}',
-                    '{agent_internal_id}',
                     TIMESTAMP '{now}', TIMESTAMP '{now}'
                 )
                 """)
@@ -2288,7 +2285,7 @@ class AgentMetadataExporter:
                                     ON ag.agent_id = rel.agent_id
                                    AND ag.is_current = true
                                 LEFT JOIN {cls.CORE_DB_NAME}.agent_identifications ai
-                                    ON ai.agent_internal_id = rel.agent_internal_id
+                                    ON ai.agent_id = rel.agent_id
                                    AND COALESCE(ai.is_current, true) = true
                                 WHERE rel.ai_use_case_id = u.ai_use_case_id
                                   AND rel.agent_id IS NOT NULL
@@ -2462,14 +2459,14 @@ class AgentMetadataExporter:
         )
 
         remaining_agents_q = f"""
-            SELECT DISTINCT rel.agent_internal_id
+            SELECT DISTINCT rel.agent_id
             FROM {cls.CORE_DB_NAME}.agent_ai_use_cases rel
             WHERE rel.ai_use_case_id = '{ai_use_case_id}'
-              AND COALESCE(rel.agent_internal_id, '') <> ''
+              AND COALESCE(rel.agent_id, '') <> ''
               {tenant_rel_where}
         """
         remaining_rows = cls.execute_select(remaining_agents_q)
-        remaining_ids = [r.get("agent_internal_id") for r in remaining_rows if r.get("agent_internal_id")]
+        remaining_ids = [r.get("agent_id") for r in remaining_rows if r.get("agent_id")]
         associated_count = len(remaining_ids)
 
         if associated_count == 0:
@@ -2494,14 +2491,14 @@ class AgentMetadataExporter:
         ids_sql = ", ".join([f"'{cls.sanitize(str(x))}'" for x in remaining_ids])
         metrics_q = f"""
             WITH latest_agent_scores AS (
-                SELECT DISTINCT ON (agent_internal_id)
-                    agent_internal_id,
+                SELECT DISTINCT ON (agent_id)
+                    agent_id,
                     blended_risk_score
                 FROM {cls.CORE_DB_NAME}.agent_risk_assessments
-                WHERE agent_internal_id IN ({ids_sql})
+                WHERE agent_id IN ({ids_sql})
                   AND blended_risk_score IS NOT NULL
                 ORDER BY
-                    agent_internal_id,
+                    agent_id,
                     CASE WHEN is_current = TRUE THEN 0 ELSE 1 END,
                     assessment_ts DESC NULLS LAST,
                     updated_ts DESC NULLS LAST
@@ -2510,7 +2507,7 @@ class AgentMetadataExporter:
                 SELECT
                     MAX(blended_risk_score) AS max_score,
                     (
-                        SELECT agent_internal_id
+                        SELECT agent_id
                         FROM latest_agent_scores
                         ORDER BY blended_risk_score DESC NULLS LAST
                         LIMIT 1
@@ -2532,7 +2529,7 @@ class AgentMetadataExporter:
             risk_detail_q = f"""
                 SELECT type_of_risk, risk_classification, risk_classification_score
                 FROM {cls.RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment
-                WHERE agent_internal_id = '{cls.sanitize(str(worst_agent_id))}'
+                WHERE agent_id = '{cls.sanitize(str(worst_agent_id))}'
                   AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                 ORDER BY created_ts DESC
             """
@@ -2616,7 +2613,7 @@ class AgentMetadataExporter:
         is_duplicate = len(cls.execute_select(check_q)) > 0
 
         agent_q = f"""
-            SELECT agent_id, agent_internal_id, agent_name
+            SELECT agent_id, agent_name
             FROM {cls.CORE_DB_NAME}.agents
             WHERE agent_id = '{agent_catalog_id}'
               AND COALESCE(is_current, true) = true
@@ -2625,11 +2622,10 @@ class AgentMetadataExporter:
         agent_res = cls.execute_select(agent_q)
         if not agent_res:
             agent_res = cls.execute_select(
-                f"SELECT agent_id, agent_internal_id, agent_name FROM {cls.CURATED_DB_NAME}.agent_360 WHERE agent_id = '{agent_catalog_id}' LIMIT 1"
+                f"SELECT agent_id, agent_name FROM {cls.CURATED_DB_NAME}.agent_360 WHERE agent_id = '{agent_catalog_id}' LIMIT 1"
             )
         if not agent_res:
             raise ValueError(f"Agent {agent_catalog_id} not found.")
-        target_internal_id = agent_res[0].get("agent_internal_id")
         target_agent_name = cls.sanitize(str(agent_res[0].get("agent_name") or agent_catalog_id))
 
         if not is_duplicate:
@@ -2637,7 +2633,7 @@ class AgentMetadataExporter:
             action_q = f"""
                 INSERT INTO {cls.CORE_DB_NAME}.agent_ai_use_cases (
                     tenant_id, company_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name,
-                    agent_internal_id, created_ts, updated_ts
+                    created_ts, updated_ts
                 ) VALUES (
                     {f"'{tenant_clean}'" if tenant_clean else "NULL"},
                     {company_id_sql},
@@ -2645,7 +2641,6 @@ class AgentMetadataExporter:
                     '{use_case_name}',
                     '{agent_catalog_id}',
                     '{target_agent_name}',
-                    '{target_internal_id}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}'
                 )
@@ -2654,7 +2649,6 @@ class AgentMetadataExporter:
                     company_id = EXCLUDED.company_id,
                     ai_use_case_name = EXCLUDED.ai_use_case_name,
                     agent_name = EXCLUDED.agent_name,
-                    agent_internal_id = EXCLUDED.agent_internal_id,
                     updated_ts = EXCLUDED.updated_ts
             """
             cls.execute_dml(action_q)
@@ -2773,11 +2767,11 @@ class AgentMetadataExporter:
         agent_id = cls.sanitize(str(agent_id).strip())
 
         # Fetch agent info (1 query)
-        rows = cls.execute_select(f"SELECT agent_internal_id, agent_name FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1")
+        rows = cls.execute_select(f"SELECT agent_id, agent_name FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1")
         if not rows:
             raise ValueError(f"Agent '{agent_id}' not found.")
 
-        agent_internal_id = rows[0].get("agent_internal_id")
+        agent_internal_id = agent_id
         current_agent_name = cls.sanitize(str(rows[0].get("agent_name") or "").strip())
         effective_agent_name = current_agent_name
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -2793,7 +2787,7 @@ class AgentMetadataExporter:
         if instruction:
             instr = cls.sanitize(instruction)
             cls.execute_dml(f"UPDATE {cls.CORE_DB_NAME}.agent_identifications SET is_current = false, updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
-            cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_identifications ({tenant_col}agent_internal_id, agent_id, instruction, created_ts, updated_ts, is_current) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{instr}', TIMESTAMP '{now}', TIMESTAMP '{now}', true)")
+            cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_identifications ({tenant_col}agent_id, instruction, created_ts, updated_ts, is_current) VALUES ({tenant_val}'{agent_id}', '{instr}', TIMESTAMP '{now}', TIMESTAMP '{now}', true)")
 
         # None means "leave unchanged"; [] means "clear all tools"
         if tools is not None:
@@ -2813,7 +2807,7 @@ class AgentMetadataExporter:
                     f"SELECT target_object_id, target_object_domain, target_object_name, target_object_type, "
                     f"access_level, contains_pii, contains_phi, contains_pci "
                     f"FROM {cls.CORE_DB_NAME}.agent_data_sources "
-                    f"WHERE agent_internal_id = '{agent_internal_id}' "
+                    f"WHERE agent_id = '{agent_id}' "
                     f"AND source_object_id = '{et_id}' "
                     f"AND LOWER(source_object_type) = 'tool'"
                 )
@@ -2826,12 +2820,12 @@ class AgentMetadataExporter:
             )
             cls.execute_dml(
                 f"DELETE FROM {cls.CORE_DB_NAME}.agent_data_sources "
-                f"WHERE agent_internal_id = '{agent_internal_id}' "
+                f"WHERE agent_id = '{agent_id}' "
                 f"AND target_object_type = 'Tool'"
             )
             cls.execute_dml(
                 f"DELETE FROM {cls.CORE_DB_NAME}.agent_data_sources "
-                f"WHERE agent_internal_id = '{agent_internal_id}' "
+                f"WHERE agent_id = '{agent_id}' "
                 f"AND LOWER(source_object_type) = 'tool'"
             )
             if tools:
@@ -2849,11 +2843,11 @@ class AgentMetadataExporter:
                         f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
                     )
                     tool_rows.append(
-                        f"({tenant_val}'{agent_internal_id}', '{tool_id}', '{agent_id}', "
+                        f"({tenant_val}'{tool_id}', '{agent_id}', "
                         f"'{cls.sanitize(effective_agent_name)}', '{t_name}', '{t_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
                     )
                     tool_ds_rows.append(
-                        f"({tenant_val}'{agent_internal_id}', '{agent_id}', "
+                        f"({tenant_val}'{agent_id}', "
                         f"NULL, NULL::boolean, NULL::boolean, NULL::boolean, "
                         f"TIMESTAMP '{now}', TIMESTAMP '{now}', "
                         f"'{agent_id}', NULL, '{cls.sanitize(effective_agent_name)}', 'Agent', "
@@ -2869,12 +2863,12 @@ class AgentMetadataExporter:
                 )
                 cls.execute_dml(
                     f"INSERT INTO {cls.CORE_DB_NAME}.agent_tools "
-                    f"({tenant_col}agent_internal_id, tool_id, agent_id, agent_name, tool_name, tool_description, created_ts, updated_ts) "
+                    f"({tenant_col}tool_id, agent_id, agent_name, tool_name, tool_description, created_ts, updated_ts) "
                     f"VALUES {','.join(tool_rows)}"
                 )
                 cls.execute_dml(
                     f"INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources "
-                    f"({tenant_col}agent_internal_id, agent_id, "
+                    f"({tenant_col}agent_id, "
                     f"access_level, contains_pii, contains_phi, contains_pci, "
                     f"created_ts, updated_ts, "
                     f"source_object_id, source_object_domain, source_object_name, source_object_type, "
@@ -2895,7 +2889,7 @@ class AgentMetadataExporter:
                         if not tgt_id:
                             continue
                         relink_ds_rows.append(
-                            f"({tenant_val}'{agent_internal_id}', '{agent_id}', "
+                            f"({tenant_val}'{agent_id}', "
                             f"NULL, NULL::boolean, NULL::boolean, NULL::boolean, "
                             f"TIMESTAMP '{now}', TIMESTAMP '{now}', "
                             f"'{new_tool_id}', NULL, '{new_tool_name}', 'Tool', "
@@ -2904,7 +2898,7 @@ class AgentMetadataExporter:
                 if relink_ds_rows:
                     cls.execute_dml(
                         f"INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources "
-                        f"({tenant_col}agent_internal_id, agent_id, "
+                        f"({tenant_col}agent_id, "
                         f"access_level, contains_pii, contains_phi, contains_pci, "
                         f"created_ts, updated_ts, "
                         f"source_object_id, source_object_domain, source_object_name, source_object_type, "
@@ -2959,7 +2953,6 @@ class AgentMetadataExporter:
                     u_issue_rows_ai.append(
                         f"({tenant_val}'{identifier}', '{i_title}', "
                         f"'{agent_id}', '{cls.sanitize(effective_agent_name)}', "
-                        f"'{agent_internal_id}', "
                         f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
                     )
                 if u_issue_rows_i:
@@ -2982,7 +2975,6 @@ class AgentMetadataExporter:
                         " ON CONFLICT (tenant_id, issue_id, agent_id) DO UPDATE SET "
                         "title = EXCLUDED.title, "
                         "agent_name = EXCLUDED.agent_name, "
-                        "agent_internal_id = EXCLUDED.agent_internal_id, "
                         "updated_ts = EXCLUDED.updated_ts"
                     ) if is_tenant else ""
                     cls.execute_dml(
@@ -3000,7 +2992,6 @@ class AgentMetadataExporter:
                         f"INSERT INTO {cls.CORE_DB_NAME}.agent_issues "
                         f"({tenant_col}issue_id, title, "
                         f"agent_id, agent_name, "
-                        f"agent_internal_id, "
                         f"created_ts, updated_ts) "
                         f"VALUES {','.join(u_issue_rows_ai)}"
                         f"{agent_issue_conflict}"
@@ -3012,7 +3003,7 @@ class AgentMetadataExporter:
             cls.execute_dml(f"DELETE FROM {cls.CORE_DB_NAME}.agent_knowledge_sources WHERE agent_id = '{agent_id}' {tenant_where}")
             ks_name = cls.sanitize(knowledge_source.get("name", ""))
             ks_desc = cls.sanitize(knowledge_source.get("description", ""))
-            cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources ({tenant_col}agent_internal_id, agent_id, name, description, created_ts, updated_ts) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
+            cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources ({tenant_col}agent_id, name, description, created_ts, updated_ts) VALUES ({tenant_val}'{agent_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
 
         # Merge data_source entries into tables so both paths produce the same result
         if data_source:
@@ -3065,14 +3056,14 @@ class AgentMetadataExporter:
                 cls.execute_dml(
                     f"UPDATE {cls.CORE_DB_NAME}.agent_data_sources "
                     f"SET target_object_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
-                    f"WHERE agent_internal_id = '{agent_internal_id}' "
+                    f"WHERE agent_id = '{agent_id}' "
                     f"AND target_object_id = '{table_id}' "
                     f"AND LOWER(target_object_type) = 'table'"
                 )
                 cls.execute_dml(
                     f"UPDATE {cls.CORE_DB_NAME}.agent_data_sources "
                     f"SET source_object_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
-                    f"WHERE agent_internal_id = '{agent_internal_id}' "
+                    f"WHERE agent_id = '{agent_id}' "
                     f"AND source_object_id = '{table_id}' "
                     f"AND LOWER(source_object_type) = 'table'"
                 )
@@ -3099,8 +3090,8 @@ class AgentMetadataExporter:
                 )
                 cls.execute_dml(
                     f"INSERT INTO {cls.CORE_DB_NAME}.agent_tables "
-                    f"({tenant_col}agent_id, agent_name, agent_internal_id, table_id, table_name, created_ts, updated_ts) "
-                    f"VALUES ({tenant_val}'{agent_id}', '{current_agent_name}', '{agent_internal_id}', "
+                    f"({tenant_col}agent_id, agent_name, table_id, table_name, created_ts, updated_ts) "
+                    f"VALUES ({tenant_val}'{agent_id}', '{current_agent_name}', "
                     f"'{table_id}', '{new_name}', TIMESTAMP '{now}', TIMESTAMP '{now}') "
                     f"ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET "
                     f"table_name = COALESCE(EXCLUDED.table_name, {cls.CORE_DB_NAME}.agent_tables.table_name), "
@@ -3124,15 +3115,15 @@ class AgentMetadataExporter:
 
                 cls.execute_dml(
                     f"INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources "
-                    f"({tenant_col}agent_internal_id, agent_id, "
+                    f"({tenant_col}agent_id, "
                     f"source_object_id, source_object_name, source_object_type, "
                     f"target_object_id, target_object_name, target_object_type, "
                     f"created_ts, updated_ts) "
-                    f"VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', "
+                    f"VALUES ({tenant_val}'{agent_id}', "
                     f"'{src_id}', '{src_name}', '{src_type}', "
                     f"'{table_id}', '{new_name}', 'Table', "
                     f"TIMESTAMP '{now}', TIMESTAMP '{now}') "
-                    f"ON CONFLICT (agent_internal_id, source_object_id, target_object_id) DO UPDATE SET "
+                    f"ON CONFLICT (agent_id, source_object_id, target_object_id) DO UPDATE SET "
                     f"source_object_name = EXCLUDED.source_object_name, "
                     f"target_object_name = EXCLUDED.target_object_name, updated_ts = EXCLUDED.updated_ts"
                 )
@@ -3159,15 +3150,15 @@ class AgentMetadataExporter:
                     )
                     cls.execute_dml(
                         f"INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources "
-                        f"({tenant_col}agent_internal_id, agent_id, "
+                        f"({tenant_col}agent_id, "
                         f"source_object_id, source_object_name, source_object_type, "
                         f"target_object_id, target_object_name, target_object_type, "
                         f"created_ts, updated_ts) "
-                        f"VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', "
+                        f"VALUES ({tenant_val}'{agent_id}', "
                         f"'{table_id}', '{new_name}', 'Table', "
                         f"'{col_id}', '{clean_col}', 'Column', "
                         f"TIMESTAMP '{now}', TIMESTAMP '{now}') "
-                        f"ON CONFLICT (agent_internal_id, source_object_id, target_object_id) DO UPDATE SET "
+                        f"ON CONFLICT (agent_id, source_object_id, target_object_id) DO UPDATE SET "
                         f"source_object_name = EXCLUDED.source_object_name, "
                         f"target_object_name = EXCLUDED.target_object_name, updated_ts = EXCLUDED.updated_ts"
                     )
@@ -3340,18 +3331,16 @@ class AgentMetadataExporter:
                 cls.execute_dml(f"""
                     INSERT INTO {cls.CORE_DB_NAME}.agent_skills (
                         tenant_id, skill_id, skill_name, agent_id, agent_name,
-                        agent_internal_id, created_ts, updated_ts
+                        created_ts, updated_ts
                     )
                     VALUES (
                         {tenant_lit}, '{skill["skill_id"]}', '{skill["skill_name"]}',
                         '{agent_id}', '{cls.sanitize(effective_agent_name)}',
-                        '{agent_internal_id}',
                         TIMESTAMP '{now}', TIMESTAMP '{now}'
                     )
                     ON CONFLICT (tenant_id, skill_id, agent_id) DO UPDATE SET
                         skill_name = EXCLUDED.skill_name,
                         agent_name = EXCLUDED.agent_name,
-                        agent_internal_id = EXCLUDED.agent_internal_id,
                         updated_ts = EXCLUDED.updated_ts
                 """)
 
@@ -3389,7 +3378,7 @@ class AgentMetadataExporter:
             cls.execute_dml(
                 f"UPDATE {cls.CORE_DB_NAME}.agent_data_sources "
                 f"SET target_object_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
-                f"WHERE agent_internal_id = '{agent_internal_id}' "
+                f"WHERE agent_id = '{agent_id}' "
                 f"AND LOWER(target_object_type) = 'column' "
                 f"AND LOWER(target_object_name) = LOWER('{old_name}')"
             )
@@ -3424,13 +3413,13 @@ class AgentMetadataExporter:
 
         agent_id = cls.sanitize(str(agent_id).strip())
 
-        # Resolve the internal ID — needed for curated/risk tables
+        # Confirm the agent exists before cascading deletes.
         rows = cls.execute_select(
-            f"SELECT agent_internal_id FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}' LIMIT 1"
+            f"SELECT agent_id FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}' LIMIT 1"
         )
         if not rows:
             raise ValueError(f"Agent {agent_id} not found.")
-        agent_internal_id = cls.sanitize(str(rows[0]["agent_internal_id"]))
+        agent_internal_id = agent_id
 
         # 1. Remove agent relationships and refresh association counts on impacted use cases.
         cls.execute_dml(f"""
@@ -3463,14 +3452,14 @@ class AgentMetadataExporter:
             WHERE uc.ai_use_case_id = c.ai_use_case_id
         """)
 
-        # 2. Core tables — all keyed on agent_id or agent_internal_id
+        # 2. Core tables — all keyed on agent_id
         for table in ("agent_tools", "agent_knowledge_sources", "agent_data_sources", "agent_identifications", "agent_issues"):
             cls.execute_dml(
                 f"DELETE FROM {cls.CORE_DB_NAME}.{table} WHERE agent_id = '{agent_id}'"
             )
 
         cls.execute_dml(
-            f"DELETE FROM {cls.CORE_DB_NAME}.agent_risk_assessments WHERE agent_internal_id = '{agent_internal_id}'"
+            f"DELETE FROM {cls.CORE_DB_NAME}.agent_risk_assessments WHERE agent_id = '{agent_id}'"
         )
         cls.execute_dml(
             f"DELETE FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}'"
@@ -3479,13 +3468,13 @@ class AgentMetadataExporter:
         # 3. Curated snapshot
         if cls.CURATED_DB_NAME:
             cls.execute_dml(
-                f"DELETE FROM {cls.CURATED_DB_NAME}.agent_360 WHERE agent_internal_id = '{agent_internal_id}'"
+                f"DELETE FROM {cls.CURATED_DB_NAME}.agent_360 WHERE agent_id = '{agent_id}'"
             )
 
         # 4. Risk management schema
         if cls.RISK_MANAGEMENT_DB_NAME:
             cls.execute_dml(
-                f"DELETE FROM {cls.RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment WHERE agent_internal_id = '{agent_internal_id}'"
+                f"DELETE FROM {cls.RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment WHERE agent_id = '{agent_id}'"
             )
 
         return {"message": "Agent deleted successfully.", "agent_id": agent_id}

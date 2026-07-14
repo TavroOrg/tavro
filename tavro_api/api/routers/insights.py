@@ -457,7 +457,7 @@ def _profile_dimension_hint(categories: List[str], category_labels: Dict[str, st
 _AGENTS_SQL = f"""
 SELECT
     a.agent_id,
-    a.agent_internal_id,
+    a.agent_id AS agent_internal_id,
     a.agent_name,
     a.agent_description,
     a.source_system,
@@ -490,7 +490,7 @@ LEFT JOIN LATERAL (
 LEFT JOIN LATERAL (
     SELECT autonomy_level
     FROM {CORE}.agent_configurations
-    WHERE agent_internal_id = a.agent_internal_id AND COALESCE(is_current, TRUE) = TRUE
+    WHERE agent_id = a.agent_id AND COALESCE(is_current, TRUE) = TRUE
     ORDER BY is_current DESC NULLS LAST, updated_ts DESC NULLS LAST
     LIMIT 1
 ) cfg ON TRUE
@@ -498,26 +498,26 @@ LEFT JOIN LATERAL (
     SELECT blended_risk_score, blended_risk_class, regulatory_risk_score,
            regulatory_risk_class, aivss_score, aivss_class, state_name, assessment_ts
     FROM {CORE}.agent_risk_assessments
-    WHERE agent_internal_id = a.agent_internal_id AND COALESCE(is_current, TRUE) = TRUE
+    WHERE agent_id = a.agent_id AND COALESCE(is_current, TRUE) = TRUE
     ORDER BY assessment_ts DESC NULLS LAST, updated_ts DESC NULLS LAST
     LIMIT 1
 ) r ON TRUE
 LEFT JOIN LATERAL (
     SELECT application_name
     FROM {CORE}.agent_business_applications
-    WHERE agent_internal_id = a.agent_internal_id
+    WHERE agent_id = a.agent_id
     ORDER BY created_ts DESC NULLS LAST
     LIMIT 1
 ) app ON TRUE
 LEFT JOIN (
-    SELECT agent_internal_id, COUNT(*)::int AS cnt FROM {CORE}.agent_data_sources GROUP BY agent_internal_id
-) ds ON ds.agent_internal_id = a.agent_internal_id
+    SELECT agent_id, COUNT(*)::int AS cnt FROM {CORE}.agent_data_sources GROUP BY agent_id
+) ds ON ds.agent_id = a.agent_id
 LEFT JOIN (
-    SELECT agent_internal_id, COUNT(*)::int AS cnt FROM {CORE}.agent_business_processes GROUP BY agent_internal_id
-) bp ON bp.agent_internal_id = a.agent_internal_id
+    SELECT agent_id, COUNT(*)::int AS cnt FROM {CORE}.agent_business_processes GROUP BY agent_id
+) bp ON bp.agent_id = a.agent_id
 LEFT JOIN (
-    SELECT agent_internal_id, COUNT(*)::int AS cnt FROM {CORE}.agent_business_applications GROUP BY agent_internal_id
-) ba ON ba.agent_internal_id = a.agent_internal_id
+    SELECT agent_id, COUNT(*)::int AS cnt FROM {CORE}.agent_business_applications GROUP BY agent_id
+) ba ON ba.agent_id = a.agent_id
 WHERE COALESCE(a.is_current, TRUE) = TRUE
   AND (a.tenant_id = :tid OR a.tenant_id IS NULL)
 """

@@ -673,17 +673,15 @@ async def save_to_db(body: SaveToDbRequest, db: AsyncSession = Depends(get_db)):
     """Upsert generated agent code into the database."""
     await db.execute(
         text("""
-            INSERT INTO core.agent_generated_code (agent_internal_id, tenant_id, agent_id, filename, code, updated_at)
-            VALUES (:agent_internal_id, :tenant_id, :agent_id, :filename, :code, now())
+            INSERT INTO core.agent_generated_code (tenant_id, agent_id, filename, code, updated_at)
+            VALUES (:tenant_id, :agent_id, :filename, :code, now())
             ON CONFLICT (agent_id, filename)
             DO UPDATE SET
                 code = EXCLUDED.code,
-                agent_internal_id = EXCLUDED.agent_internal_id,
                 tenant_id = EXCLUDED.tenant_id,
                 updated_at = now()
         """),
         {
-            "agent_internal_id": body.agent_internal_id,
             "tenant_id": body.tenant_id,
             "agent_id": body.agent_id,
             "filename": body.filename,
@@ -704,7 +702,7 @@ async def load_from_db(
     try:
         result = await db.execute(
             text("""
-                SELECT code, tenant_id, agent_internal_id, updated_at
+                SELECT code, tenant_id, agent_id AS agent_internal_id, updated_at
                 FROM core.agent_generated_code
                 WHERE agent_id = :agent_id AND filename = :filename
             """),

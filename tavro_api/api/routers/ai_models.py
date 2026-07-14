@@ -280,13 +280,7 @@ async def list_ai_models(
     # Company filter for the agent count subquery — join agents table to apply company_id.
     _agent_cnt_join = (
         f"""JOIN {CORE}.agents ag
-                ON (
-                    (rel.agent_id IS NOT NULL AND rel.agent_id <> '' AND ag.agent_id = rel.agent_id)
-                    OR (
-                        rel.agent_internal_id IS NOT NULL AND rel.agent_internal_id <> ''
-                        AND ag.agent_internal_id = rel.agent_internal_id
-                    )
-                )"""
+                ON ag.agent_id = rel.agent_id"""
         if company_id else ""
     )
     _agent_cnt_cf = (
@@ -339,26 +333,14 @@ async def list_ai_models(
                         FROM (
                             SELECT
                                 COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
-                                (array_agg(COALESCE(ag2.agent_internal_id, rel2.agent_internal_id) ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                                (array_agg(ag2.agent_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
                             FROM {CORE}.agent_ai_models rel2
                             JOIN {CORE}.agents ag2
-                                ON (
-                                    (rel2.agent_id IS NOT NULL AND rel2.agent_id <> '' AND ag2.agent_id = rel2.agent_id)
-                                    OR (
-                                        rel2.agent_internal_id IS NOT NULL AND rel2.agent_internal_id <> ''
-                                        AND ag2.agent_internal_id = rel2.agent_internal_id
-                                    )
-                                )
+                                ON ag2.agent_id = rel2.agent_id
                             JOIN LATERAL (
                                 SELECT ara.blended_risk_score
                                 FROM {CORE}.agent_risk_assessments ara
-                                WHERE (
-                                    (rel2.agent_id IS NOT NULL AND rel2.agent_id <> '' AND ara.agent_id = rel2.agent_id)
-                                    OR (
-                                        rel2.agent_internal_id IS NOT NULL AND rel2.agent_internal_id <> ''
-                                        AND ara.agent_internal_id = rel2.agent_internal_id
-                                    )
-                                )
+                                WHERE ara.agent_id = rel2.agent_id
                                   AND ara.blended_risk_score IS NOT NULL
                                 ORDER BY
                                     CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -367,8 +349,8 @@ async def list_ai_models(
                                 LIMIT 1
                             ) brs ON TRUE
                             WHERE LOWER(TRIM(rel2.ai_model_id)) = LOWER(TRIM(m.ai_model_id))
-                              AND COALESCE(rel2.agent_id, rel2.agent_internal_id) IS NOT NULL
-                              AND COALESCE(rel2.agent_id, rel2.agent_internal_id) <> ''
+                              AND rel2.agent_id IS NOT NULL
+                              AND rel2.agent_id <> ''
                               {_agent_company_filter}
                               {_c_tid_filter}
                         ) agg
@@ -387,7 +369,7 @@ async def list_ai_models(
                             MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS cmp_residual_class,
                             COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS cmp_residual_score
                         FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
-                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                        WHERE ara.agent_id = company_risk.worst_agent_internal_id
                           AND company_risk.worst_agent_internal_id IS NOT NULL
                           AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
                     ) company_risk_class ON TRUE
@@ -425,8 +407,8 @@ async def list_ai_models(
                             FROM {CORE}.agent_ai_models rel
                             {_agent_cnt_join}
                             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(m.ai_model_id))
-                              AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
-                              AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+                              AND rel.agent_id IS NOT NULL
+                              AND rel.agent_id <> ''
                               {rel_tenant_filter}
                               {_agent_cnt_cf}
                         ), 0) AS related_agent_count
@@ -582,23 +564,11 @@ async def get_ai_model(
 
     agent_catalog_join = (
         f"""JOIN {CORE}.agents a
-                ON (
-                    (rel.agent_id IS NOT NULL AND rel.agent_id <> '' AND a.agent_id = rel.agent_id)
-                    OR (
-                        rel.agent_internal_id IS NOT NULL AND rel.agent_internal_id <> ''
-                        AND a.agent_internal_id = rel.agent_internal_id
-                    )
-                )
+                ON a.agent_id = rel.agent_id
                 AND COALESCE(a.is_current, true) = true"""
         if company_id
         else f"""LEFT JOIN {CORE}.agents a
-                ON (
-                    (rel.agent_id IS NOT NULL AND rel.agent_id <> '' AND a.agent_id = rel.agent_id)
-                    OR (
-                        rel.agent_internal_id IS NOT NULL AND rel.agent_internal_id <> ''
-                        AND a.agent_internal_id = rel.agent_internal_id
-                    )
-                )
+                ON a.agent_id = rel.agent_id
                 AND COALESCE(a.is_current, true) = true"""
     )
 
@@ -606,13 +576,13 @@ async def get_ai_model(
         text(f"""
             SELECT
                 rel.agent_id,
-                rel.agent_internal_id,
+                rel.agent_id AS agent_internal_id,
                 COALESCE(a.agent_name, rel.agent_name, rel.agent_id) AS agent_name
             FROM {CORE}.agent_ai_models rel
             {agent_catalog_join}
             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
-              AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
-              AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+              AND rel.agent_id IS NOT NULL
+              AND rel.agent_id <> ''
               {_tf('rel')}
               {agent_relation_company_filter}
               {_company_filter('a')}
@@ -692,13 +662,7 @@ async def get_ai_model(
     if company_id:
         _agent_join = f"""
             JOIN {CORE}.agents ag
-                ON (
-                    (rel.agent_id IS NOT NULL AND rel.agent_id <> '' AND ag.agent_id = rel.agent_id)
-                    OR (
-                        rel.agent_internal_id IS NOT NULL AND rel.agent_internal_id <> ''
-                        AND ag.agent_internal_id = rel.agent_internal_id
-                    )
-                )
+                ON ag.agent_id = rel.agent_id
         """
         _ci_agent = (" OR ag.company_id IS NULL OR TRIM(CAST(ag.company_id AS text)) = ''"
                      " OR ag.company_id = 'None'")
@@ -710,12 +674,12 @@ async def get_ai_model(
 
         cnt_row = await db.execute(
             text(f"""
-                SELECT COUNT(DISTINCT COALESCE(rel.agent_id, rel.agent_internal_id))::int AS cnt
+                SELECT COUNT(DISTINCT rel.agent_id)::int AS cnt
                 FROM {CORE}.agent_ai_models rel
                 {_agent_join}
                 WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
-                  AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
-                  AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+                  AND rel.agent_id IS NOT NULL
+                  AND rel.agent_id <> ''
                   {_rel_cf}
                   {_rel_tf}
             """),
@@ -734,16 +698,10 @@ async def get_ai_model(
                     FROM {CORE}.agent_ai_models rel
                     {_agent_join}
                     JOIN LATERAL (
-                        SELECT COALESCE(ara.agent_internal_id, ag.agent_internal_id, rel.agent_internal_id) AS agent_internal_id,
+                        SELECT rel.agent_id AS agent_internal_id,
                                ara.blended_risk_score
                         FROM {CORE}.agent_risk_assessments ara
-                        WHERE (
-                            (rel.agent_id IS NOT NULL AND rel.agent_id <> '' AND ara.agent_id = rel.agent_id)
-                            OR (
-                                rel.agent_internal_id IS NOT NULL AND rel.agent_internal_id <> ''
-                                AND ara.agent_internal_id = rel.agent_internal_id
-                            )
-                        )
+                        WHERE ara.agent_id = rel.agent_id
                           AND ara.blended_risk_score IS NOT NULL
                         ORDER BY
                             CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -752,8 +710,8 @@ async def get_ai_model(
                         LIMIT 1
                     ) brs ON TRUE
                     WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
-                      AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
-                      AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+                      AND rel.agent_id IS NOT NULL
+                      AND rel.agent_id <> ''
                       {_rel_cf}
                       {_rel_tf}
                     ORDER BY brs.blended_risk_score DESC NULLS LAST
@@ -790,7 +748,7 @@ async def get_ai_model(
                         text(f"""
                             SELECT type_of_risk, risk_classification, risk_classification_score
                             FROM {RISK_MANAGEMENT}.agent_risk_assessment
-                            WHERE agent_internal_id = :aid
+                            WHERE agent_id = :aid
                               AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                             ORDER BY created_ts DESC NULLS LAST
                         """),
@@ -885,7 +843,7 @@ async def delete_ai_model(ai_model_id: str, db: AsyncSession = Depends(get_db)):
             raise HTTPException(status_code=404, detail=f"AI Model '{mid}' not found.")
 
         await db.execute(
-            text("DELETE FROM public.ai_model_attachment WHERE ai_model_id = :mid"),
+            text("DELETE FROM core.ai_model_attachment WHERE ai_model_id = :mid"),
             {"mid": mid},
         )
         await db.execute(
@@ -959,7 +917,7 @@ async def link_agent(
         agent_row = await db.execute(
             text(
                 f"""
-                SELECT agent_internal_id, agent_name, company_id
+                SELECT agent_id AS agent_internal_id, agent_name, company_id
                 FROM {CORE}.agents
                 WHERE agent_id = :aid
                   AND is_current = true
@@ -972,7 +930,6 @@ async def link_agent(
         agent = agent_row.mappings().first()
         if not agent:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found for the selected company.")
-        agent_internal_id = str(agent["agent_internal_id"])
         agent_name = str(agent.get("agent_name") or "")
         relation_company_id = None if _is_global_company_value(agent.get("company_id")) else (
             company_id or model.get("company_id")
@@ -981,10 +938,10 @@ async def link_agent(
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.agent_ai_models
-                    (tenant_id, company_id, ai_model_id, model_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts)
+                    (tenant_id, company_id, ai_model_id, model_name, agent_id, agent_name, created_ts, updated_ts)
                 VALUES
-                    (:tid, :cid, :mid, :mname, :aid, :aname, :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                ON CONFLICT (agent_internal_id, ai_model_id)
+                    (:tid, :cid, :mid, :mname, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (agent_id, ai_model_id)
                 DO UPDATE SET
                     model_name = EXCLUDED.model_name,
                     agent_id = EXCLUDED.agent_id,
@@ -1000,7 +957,6 @@ async def link_agent(
                 "mname": str(model.get("model_name") or mid),
                 "aid": agent_id,
                 "aname": agent_name,
-                "iid": agent_internal_id,
             },
         )
         await _refresh_model_rollup(db, mid)
@@ -1305,11 +1261,11 @@ async def _refresh_model_rollup(db: AsyncSession, ai_model_id: str) -> None:
         text(f"""
             UPDATE {CORE}.ai_models
             SET no_of_associated_agents = (
-                SELECT COUNT(DISTINCT COALESCE(rel.agent_id, rel.agent_internal_id))
+                SELECT COUNT(DISTINCT rel.agent_id)
                 FROM {CORE}.agent_ai_models rel
                 WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
-                  AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
-                  AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+                  AND rel.agent_id IS NOT NULL
+                  AND rel.agent_id <> ''
             ),
             updated_ts = CURRENT_TIMESTAMP
             WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid))
@@ -1343,12 +1299,9 @@ async def _refresh_model_rollup(db: AsyncSession, ai_model_id: str) -> None:
             SELECT brs.agent_internal_id, brs.blended_risk_score
             FROM {CORE}.agent_ai_models rel
             JOIN LATERAL (
-                SELECT ara.agent_internal_id, ara.blended_risk_score
+                SELECT ara.agent_id AS agent_internal_id, ara.blended_risk_score
                 FROM {CORE}.agent_risk_assessments ara
-                WHERE (ara.agent_id = rel.agent_id
-                       OR (ara.agent_internal_id = rel.agent_internal_id
-                           AND rel.agent_internal_id IS NOT NULL
-                           AND rel.agent_internal_id <> ''))
+                WHERE ara.agent_id = rel.agent_id
                   AND ara.blended_risk_score IS NOT NULL
                 ORDER BY
                     CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -1357,8 +1310,8 @@ async def _refresh_model_rollup(db: AsyncSession, ai_model_id: str) -> None:
                 LIMIT 1
             ) brs ON TRUE
             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
-              AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
-              AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+              AND rel.agent_id IS NOT NULL
+              AND rel.agent_id <> ''
             ORDER BY brs.blended_risk_score DESC NULLS LAST
             LIMIT 1
         """),
@@ -1377,7 +1330,7 @@ async def _refresh_model_rollup(db: AsyncSession, ai_model_id: str) -> None:
             text(f"""
                 SELECT type_of_risk, risk_classification, risk_classification_score
                 FROM {RISK_MANAGEMENT}.agent_risk_assessment
-                WHERE agent_internal_id = :aid
+                WHERE agent_id = :aid
                   AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                 ORDER BY created_ts DESC NULLS LAST
             """),
@@ -1436,7 +1389,7 @@ async def list_model_attachments(ai_model_id: str, category: Optional[str] = Non
     rows = await db.execute(
         text(f"""
             SELECT id, ai_model_id, category, filename, mime_type, file_size_bytes, created_at, updated_at
-            FROM public.ai_model_attachment
+            FROM core.ai_model_attachment
             WHERE {' AND '.join(clauses)}
             ORDER BY created_at DESC
         """),
@@ -1463,10 +1416,12 @@ async def create_model_attachment(ai_model_id: str, body: AiModelAttachmentCreat
     row = await db.execute(
         text(
             """
-            INSERT INTO public.ai_model_attachment
-                (ai_model_id, category, filename, mime_type, file_size_bytes, file_data)
+            INSERT INTO core.ai_model_attachment
+                (tenant_id, company_id, ai_model_id, category, filename, mime_type, file_size_bytes, file_data)
             VALUES
-                (:ai_model_id, :category, :filename, :mime_type, :file_size_bytes, :file_data)
+                ((SELECT tenant_id FROM core.ai_models WHERE ai_model_id = :ai_model_id),
+                 (SELECT company_id FROM core.ai_models WHERE ai_model_id = :ai_model_id),
+                 :ai_model_id, :category, :filename, :mime_type, :file_size_bytes, :file_data)
             RETURNING id, ai_model_id, category, filename, mime_type, file_size_bytes, created_at, updated_at
             """
         ),
@@ -1489,7 +1444,7 @@ async def download_model_attachment(ai_model_id: str, attachment_id: str, db: As
         text(
             """
             SELECT filename, mime_type, file_data
-            FROM public.ai_model_attachment
+            FROM core.ai_model_attachment
             WHERE id = :attachment_id AND ai_model_id = :ai_model_id
             LIMIT 1
             """
@@ -1513,7 +1468,7 @@ async def delete_model_attachment(ai_model_id: str, attachment_id: str, db: Asyn
     result = await db.execute(
         text(
             """
-            DELETE FROM public.ai_model_attachment
+            DELETE FROM core.ai_model_attachment
             WHERE id = :attachment_id AND ai_model_id = :ai_model_id
             """
         ),

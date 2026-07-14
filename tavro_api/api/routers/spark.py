@@ -1139,7 +1139,7 @@ async def _upsert_ideas(company_id: str, ideas: list[SparkIdea], tenant_id: str 
                         :signal_type, :signal_label, :target_dimensions,
                         CAST(:target_nodes AS jsonb), :complexity, :estimated_impact, CAST(:similar_agents AS jsonb), NOW()
                     )
-                    ON CONFLICT (idea_id) DO UPDATE SET
+                    ON CONFLICT (tenant_id, company_id, idea_id) DO UPDATE SET
                         company_id        = EXCLUDED.company_id,
                         tenant_id         = EXCLUDED.tenant_id,
                         title             = EXCLUDED.title,

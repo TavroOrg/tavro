@@ -163,14 +163,15 @@ async def create_dim_node(body: DimNodeCreate, tenant_id: str = Depends(require_
     row = await db.execute(
         text("""
             INSERT INTO twin.dim_node
-                (company_id, dim_type_id, label, summary, tags, visibility, sensitive, valid_from)
+                (tenant_id, company_id, dim_type_id, label, summary, tags, visibility, sensitive, valid_from)
             VALUES
-                (:company_id, :dim_type_id, :label, :summary, cast(:tags as jsonb),
+                (:tenant_id, :company_id, :dim_type_id, :label, :summary, cast(:tags as jsonb),
                  :visibility, :sensitive, coalesce(:valid_from, now()))
             RETURNING *
         """),
         {
             **body.model_dump(),
+            "tenant_id":   tenant_id,
             "company_id":  str(body.company_id),
             "dim_type_id": str(body.dim_type_id),
             "tags":        json.dumps(body.tags),
@@ -550,8 +551,10 @@ async def upload_attachment(
 
     row = await db.execute(
         text("""
-            INSERT INTO twin.dim_node_attachment (node_id, filename, content_type, size_bytes, data)
-            VALUES (:node_id, :filename, :content_type, :size_bytes, :data)
+            INSERT INTO twin.dim_node_attachment (tenant_id, company_id, node_id, filename, content_type, size_bytes, data)
+            VALUES ((SELECT tenant_id FROM twin.dim_node WHERE id = :node_id),
+                    (SELECT company_id FROM twin.dim_node WHERE id = :node_id),
+                    :node_id, :filename, :content_type, :size_bytes, :data)
             RETURNING id, node_id, filename, content_type, size_bytes, uploaded_at
         """),
         {
@@ -583,15 +586,17 @@ async def upload_attachment(
         app_id = str(eid["business_application_id"]) if eid and eid.get("business_application_id") else None
         if app_id:
             dup = await db.execute(
-                text("SELECT 1 FROM public.application_attachment WHERE application_id = :aid AND filename = :fn LIMIT 1"),
+                text("SELECT 1 FROM core.application_attachment WHERE application_id = :aid AND filename = :fn LIMIT 1"),
                 {"aid": app_id, "fn": fname},
             )
             if not dup.scalar():
                 await db.execute(
                     text("""
-                        INSERT INTO public.application_attachment
-                            (application_id, filename, mime_type, file_size_bytes, file_data)
-                        VALUES (:application_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                        INSERT INTO core.application_attachment
+                            (tenant_id, company_id, application_id, filename, mime_type, file_size_bytes, file_data)
+                        VALUES ((SELECT tenant_id FROM core.business_applications WHERE business_application_id = :application_id),
+                                (SELECT company_id FROM core.business_applications WHERE business_application_id = :application_id),
+                                :application_id, :filename, :mime_type, :file_size_bytes, :file_data)
                     """),
                     {"application_id": app_id, "filename": fname, "mime_type": mime, "file_size_bytes": len(data), "file_data": data},
                 )
@@ -605,15 +610,17 @@ async def upload_attachment(
         pid = str(eid["business_process_id"]) if eid and eid.get("business_process_id") else None
         if pid:
             dup = await db.execute(
-                text("SELECT 1 FROM public.process_attachment WHERE process_id = :pid AND filename = :fn LIMIT 1"),
+                text("SELECT 1 FROM core.process_attachment WHERE process_id = :pid AND filename = :fn LIMIT 1"),
                 {"pid": pid, "fn": fname},
             )
             if not dup.scalar():
                 await db.execute(
                     text("""
-                        INSERT INTO public.process_attachment
-                            (process_id, filename, mime_type, file_size_bytes, file_data)
-                        VALUES (:process_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                        INSERT INTO core.process_attachment
+                            (tenant_id, company_id, process_id, filename, mime_type, file_size_bytes, file_data)
+                        VALUES ((SELECT tenant_id FROM core.business_processes WHERE business_process_id = :process_id),
+                                (SELECT company_id FROM core.business_processes WHERE business_process_id = :process_id),
+                                :process_id, :filename, :mime_type, :file_size_bytes, :file_data)
                     """),
                     {"process_id": pid, "filename": fname, "mime_type": mime, "file_size_bytes": len(data), "file_data": data},
                 )
@@ -627,15 +634,17 @@ async def upload_attachment(
         iid = str(eid["integration_id"]) if eid and eid.get("integration_id") else None
         if iid:
             dup = await db.execute(
-                text("SELECT 1 FROM public.integration_attachment WHERE integration_id = :iid AND filename = :fn LIMIT 1"),
+                text("SELECT 1 FROM core.integration_attachment WHERE integration_id = :iid AND filename = :fn LIMIT 1"),
                 {"iid": iid, "fn": fname},
             )
             if not dup.scalar():
                 await db.execute(
                     text("""
-                        INSERT INTO public.integration_attachment
-                            (integration_id, filename, mime_type, file_size_bytes, file_data)
-                        VALUES (:integration_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                        INSERT INTO core.integration_attachment
+                            (tenant_id, company_id, integration_id, filename, mime_type, file_size_bytes, file_data)
+                        VALUES ((SELECT tenant_id FROM core.business_integrations WHERE integration_id = :integration_id),
+                                (SELECT company_id FROM core.business_integrations WHERE integration_id = :integration_id),
+                                :integration_id, :filename, :mime_type, :file_size_bytes, :file_data)
                     """),
                     {"integration_id": iid, "filename": fname, "mime_type": mime, "file_size_bytes": len(data), "file_data": data},
                 )
@@ -711,7 +720,7 @@ async def delete_attachment(attachment_id: UUID, tenant_id: str = Depends(requir
         app_id = str(eid["business_application_id"]) if eid and eid.get("business_application_id") else None
         if app_id:
             await db.execute(
-                text("DELETE FROM public.application_attachment WHERE application_id = :aid AND filename = :fn"),
+                text("DELETE FROM core.application_attachment WHERE application_id = :aid AND filename = :fn"),
                 {"aid": app_id, "fn": fname},
             )
             await db.commit()
@@ -724,7 +733,7 @@ async def delete_attachment(attachment_id: UUID, tenant_id: str = Depends(requir
         pid = str(eid["business_process_id"]) if eid and eid.get("business_process_id") else None
         if pid:
             await db.execute(
-                text("DELETE FROM public.process_attachment WHERE process_id = :pid AND filename = :fn"),
+                text("DELETE FROM core.process_attachment WHERE process_id = :pid AND filename = :fn"),
                 {"pid": pid, "fn": fname},
             )
             await db.commit()
@@ -737,7 +746,7 @@ async def delete_attachment(attachment_id: UUID, tenant_id: str = Depends(requir
         iid = str(eid["integration_id"]) if eid and eid.get("integration_id") else None
         if iid:
             await db.execute(
-                text("DELETE FROM public.integration_attachment WHERE integration_id = :iid AND filename = :fn"),
+                text("DELETE FROM core.integration_attachment WHERE integration_id = :iid AND filename = :fn"),
                 {"iid": iid, "fn": fname},
             )
             await db.commit()
