@@ -84,7 +84,7 @@ async def list_companies(
 
         result = await db.execute(
             text(
-                "SELECT id, name, industry, region, legal_entity, tenant_id "
+                "SELECT id, name, industry, legal_entity, tenant_id "
                 "FROM twin.company WHERE tenant_id = :tid ORDER BY name"
             ),
             {"tid": tenant_id},
@@ -95,7 +95,6 @@ async def list_companies(
             "id":           str(r.id),
             "name":         r.name,
             "industry":     r.industry,
-            "region":       r.region,
             "legal_entity": r.legal_entity,
             "tenant_id":    getattr(r, "tenant_id", None),
         }

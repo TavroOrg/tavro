@@ -43,7 +43,6 @@ export interface BlueprintContext {
   companyId:   string;
   companyName: string;
   industry:    string;
-  region:      string;
   /** Summarised dimension nodes — label + category + 1-sentence summary */
   dimensions:  { label: string; category: string; summary?: string }[];
   /** Relationships between dimension nodes from dim_edge */

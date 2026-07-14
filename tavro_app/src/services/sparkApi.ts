@@ -79,7 +79,6 @@ class SparkApi {
     ideaCount?: number,
     companyName?: string,
     industry?: string,
-    region?: string,
   ): AsyncGenerator<SparkIdea> {
     appLogger.req('Spark generateIdeasStream', { companyId, dimensions, direction: direction ?? '(none)', ideaCount });
     const t0 = Date.now();
@@ -110,7 +109,6 @@ class SparkApi {
         direction: direction?.trim() || null,
         companyName: companyName?.trim() || null,
         industry: industry?.trim() || null,
-        region: region?.trim() || null,
         edges: context.edges,
         ideaCount: ideaCount ?? 5,
         similarAgents: context.similar_agents,

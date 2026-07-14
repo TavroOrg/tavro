@@ -954,7 +954,6 @@ app.get('/chat/resume/:requestId', (req, res) => {
 //   direction     string  (direction mode)
 //   companyName   string
 //   industry      string
-//   region        string
 //   edges         [{source_label, target_label, rel_type}]
 //   ideaCount     number
 //   similarAgents [{agent_id, agent_name}]  (included in gap-mode ideas)
@@ -965,10 +964,9 @@ function sparkIdeaId(nodeId, signalType, direction) {
     return createHash('sha256').update(raw).digest('hex').slice(0, 16);
 }
 
-function buildSparkGapPrompt(candidates, direction, companyName, industry, region, edges) {
+function buildSparkGapPrompt(candidates, direction, companyName, industry, edges) {
     const companyLabel = companyName || 'the company';
     const industryLabel = industry || 'enterprise operations';
-    const regionClause = region ? ` (${region})` : '';
     const currentYear = new Date().getFullYear();
 
     const signals = candidates.map((c, i) => ({
@@ -990,7 +988,7 @@ function buildSparkGapPrompt(candidates, direction, companyName, industry, regio
 
     const system = [
         `You are a senior AI implementation consultant specialising in ${industryLabel}.`,
-        `You are analysing ${companyLabel}${regionClause}, a ${industryLabel} company.`,
+        `You are analysing ${companyLabel}, a ${industryLabel} company.`,
         'Your job is to identify specific, high-ROI AI use case ideas that can realistically be implemented in 3–18 months.',
         `Today's year is ${currentYear}.`,
         `NEVER reference goals, targets, revenue plans, or milestones tied to years before ${currentYear}.`,
@@ -999,7 +997,7 @@ function buildSparkGapPrompt(candidates, direction, companyName, industry, regio
         '\n\nA GOOD idea:\n  • Names one specific AI capability — anomaly detection, document extraction, predictive classification, NLP triage, demand forecasting, quality inspection, work order routing, root-cause analysis, etc.\n  • References the exact system or process in the context (use its label and category)\n  • Describes concretely what input data flows in and what specific output or decision is produced\n  • States a measurable ROI hook: hours saved per week, defect rate reduction, cost avoidance, decision speed-up\n  • Is achievable by a small team (2–5 engineers) using current AI APIs and tools\n\nA BAD idea (never generate these):\n  • Vague: \'leverage AI\', \'harness machine learning\', \'build an AI platform\', \'explore opportunities\'\n  • Time-expired: references FY2024, FY2025, or any past-year target\n  • Scope-inflated: describes a full enterprise programme with no specific agent\n  • Disconnected: idea has no real link to the specific system named in the context signal',
     ].join(' ');
 
-    const companyHeader = `Company: ${companyLabel} | Industry: ${industryLabel}${region ? ` | Region: ${region}` : ''}\n\n`;
+    const companyHeader = `Company: ${companyLabel} | Industry: ${industryLabel}\n\n`;
     const user = [
         companyHeader,
         'For each signal below, generate ONE specific AI use case idea as a JSON object with exactly these fields:\n',
@@ -1022,10 +1020,9 @@ function buildSparkGapPrompt(candidates, direction, companyName, industry, regio
     return [system, user];
 }
 
-function buildSparkDirectionPrompt(companyNodes, direction, count, companyName, industry, region, edges) {
+function buildSparkDirectionPrompt(companyNodes, direction, count, companyName, industry, edges) {
     const companyLabel = companyName || 'the company';
     const industryLabel = industry || 'enterprise operations';
-    const regionClause = region ? ` (${region})` : '';
     const currentYear = new Date().getFullYear();
 
     const contextLines = (companyNodes || []).map(c =>
@@ -1039,14 +1036,14 @@ function buildSparkDirectionPrompt(companyNodes, direction, count, companyName, 
 
     const system = [
         `You are a senior AI implementation consultant specialising in ${industryLabel}.`,
-        `You are analysing ${companyLabel}${regionClause}, a ${industryLabel} company.`,
+        `You are analysing ${companyLabel}, a ${industryLabel} company.`,
         `Today's year is ${currentYear}. Never reference past-year goals or stale targets.`,
         'Generate specific, concrete, buildable AI use case ideas with measurable ROI.',
         'Do not generate agents here. Do not include agent names in titles.',
         'Each idea must name one specific AI capability — not vague phrases like \'leverage AI\'.',
     ].join(' ');
 
-    const companyHeader = `Company: ${companyLabel} | Industry: ${industryLabel}${region ? ` | Region: ${region}` : ''}\n\n`;
+    const companyHeader = `Company: ${companyLabel} | Industry: ${industryLabel}\n\n`;
     const user = [
         `FOCUS: Generate exactly ${count} distinct AI use case ideas, ALL specifically about: "${direction}"\n\n`,
         companyHeader,
@@ -1123,7 +1120,6 @@ app.post('/spark/generate/stream', async (req, res) => {
         direction,
         companyName,
         industry,
-        region,
         edges,
         ideaCount,
         similarAgents,
@@ -1151,9 +1147,9 @@ app.post('/spark/generate/stream', async (req, res) => {
 
         if (isDirection) {
             nodeMap = Object.fromEntries((companyNodes || []).map(n => [String(n.label).toLowerCase(), n]));
-            [system, user] = buildSparkDirectionPrompt(companyNodes || [], direction, count, companyName, industry, region, edges);
+            [system, user] = buildSparkDirectionPrompt(companyNodes || [], direction, count, companyName, industry, edges);
         } else {
-            [system, user] = buildSparkGapPrompt(candidates || [], direction, companyName, industry, region, edges);
+            [system, user] = buildSparkGapPrompt(candidates || [], direction, companyName, industry, edges);
         }
 
         console.log(`[spark] /spark/generate/stream mode=${mode || 'gap'} count=${count}`);
