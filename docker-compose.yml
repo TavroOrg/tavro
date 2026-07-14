@@ -1,7 +1,7 @@
 ﻿name: tavro
 
-# include:
-#   - datahub/docker-compose.datahub.yml
+include:
+  - datahub/docker-compose.datahub.yml
 
 x-risk-worker-base: &risk_worker_base
   image: tavro-risk-worker:local
