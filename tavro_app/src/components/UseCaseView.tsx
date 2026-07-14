@@ -1,10 +1,10 @@
 import React from 'react';
-import { readRoadmapConfig } from '../services/roadmapConfig';
+import { readRoadmapConfig, ROADMAP_CONFIG_UPDATED_EVENT } from '../services/roadmapConfig';
 import { useCaseApi } from '../services/useCaseApi';
 import { Link } from 'react-router-dom';
 import { UseCaseDetail } from '../types/useCase';
 import LifecycleStepper from './LifecycleStepper';
-import { USE_CASE_LIFECYCLE_STAGES } from '../constants/lifecycle';
+import { useLookupValues } from '../context/LookupContext';
 import {
     Building2,
     ShieldCheck,
@@ -291,6 +291,8 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
 }) => {
     const [activeTab, setActiveTab] = React.useState('details');
     const [generatingReport, setGeneratingReport] = React.useState(false);
+    const statusOptions = useLookupValues('ai_use_cases', 'status');
+    const statusStages = statusOptions.map(o => o.value);
 
     const handleGenerateReport = async () => {
         if (!uc.identifier) return;
@@ -347,8 +349,15 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
 
     const [expandedDims, setExpandedDims] = React.useState<Set<string>>(new Set());
 
-    // Platform-level weights — set in Settings → Roadmap configuration
-    const cfg = React.useMemo(() => readRoadmapConfig(), []);
+    // Company-wide weights — configured by the org admin in the Admin Portal.
+    // Layout.tsx syncs the cache on load/company-switch; listen so this view
+    // picks up the latest values even if it was already mounted.
+    const [cfg, setCfg] = React.useState(() => readRoadmapConfig());
+    React.useEffect(() => {
+        const handler = () => setCfg(readRoadmapConfig());
+        window.addEventListener(ROADMAP_CONFIG_UPDATED_EVENT, handler);
+        return () => window.removeEventListener(ROADMAP_CONFIG_UPDATED_EVENT, handler);
+    }, []);
     const riskWeights = cfg.riskWeights;
 
     const riskScoredCount = Object.values(riskScores).filter(s => s !== null).length;
@@ -594,11 +603,15 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 {(uc as any).use_case_type && <MetaBadge text={String((uc as any).use_case_type)} color="slate" />}
                             </div>
                             <div className="max-w-md mt-2">
-                                <LifecycleStepper
-                                    stages={USE_CASE_LIFECYCLE_STAGES}
-                                    currentStage={(uc as any).status ?? 'Identified'}
-                                    onStageChange={onLifecycleStageChange}
-                                />
+                                {statusStages.length === 0 ? (
+                                    <div className="text-sm text-slate-400 dark:text-slate-500 italic">No status options configured</div>
+                                ) : (
+                                    <LifecycleStepper
+                                        stages={statusStages}
+                                        currentStage={(uc as any).status ?? null}
+                                        onStageChange={onLifecycleStageChange}
+                                    />
+                                )}
                                 {lifecycleError && (
                                     <p className="mt-1.5 text-xs font-medium text-red-500">{lifecycleError}</p>
                                 )}
@@ -922,14 +935,8 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                 {activeTab === 'business_case' && (
                     <div className="flex flex-col gap-6 animate-fade-in">
 
-                        {/* Generate Report button — shown only when all business case fields are populated */}
+                        {/* Generate Report button */}
                         {(() => {
-                            const allFieldsPopulated = Boolean(
-                                executiveSummary && problemStatement && expectedBenefits && solutionApproach &&
-                                assumptions && quantifiedFinancialBenefits && totalFinancialImpactSummary &&
-                                implementationCostEstimate && returnOnInvestment && riskConsiderations &&
-                                implementationRoadmap && recommendation
-                            );
                             if (enriching) {
                                 return (
                                     <div className="flex justify-end">
@@ -940,7 +947,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                     </div>
                                 );
                             }
-                            if (!allFieldsPopulated) return null;
                             return (
                                 <div className="flex justify-end">
                                     <button

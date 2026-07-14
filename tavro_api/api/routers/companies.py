@@ -2,6 +2,8 @@
 # api/routers/companies.py
 # =============================================================
 
+import json
+from typing import Any
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,8 +12,63 @@ from sqlalchemy import text
 from api.database import get_db
 from api.dependencies import require_tenant
 from api.schemas import Company, CompanyCreate, CompanyUpdate, Page
+from api.lookup_defaults import seed_lookup_defaults, delete_lookup_defaults
 
 router = APIRouter()
+
+DEFAULT_PRIORITY_WEIGHTS = {"BV": 0.55, "TC": 0.20, "RISK": 0.25}
+DEFAULT_RISK_WEIGHTS = {
+    "data_privacy": 20,
+    "operational": 20,
+    "compliance": 20,
+    "ai_behavioral": 20,
+    "strategic_reputational": 20,
+}
+DEFAULT_VISIBILITY = "internal"
+DEFAULT_SENSITIVE = False
+
+
+def _json_dict(value: Any, default: dict) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else default
+        except json.JSONDecodeError:
+            return default
+    return default
+
+
+@router.get("/{company_id}/preferences")
+async def get_roadmap_config(company_id: UUID, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+    """
+    Read-only roadmap scoring weights for a company. These are configured by
+    the company's admin in the Admin Portal — regular users can view but not
+    change them, so every analyst at a company scores on the same formula.
+    """
+    row = await db.execute(
+        text("""
+            SELECT priority_weights, risk_weights, default_visibility, default_sensitive
+            FROM twin.company_preferences
+            WHERE company_id = :id AND (tenant_id = :tid OR tenant_id IS NULL)
+        """),
+        {"id": str(company_id), "tid": tenant_id},
+    )
+    result = row.mappings().first()
+    if not result:
+        return {
+            "priorityWeights": DEFAULT_PRIORITY_WEIGHTS,
+            "riskWeights": DEFAULT_RISK_WEIGHTS,
+            "defaultVisibility": DEFAULT_VISIBILITY,
+            "defaultSensitive": DEFAULT_SENSITIVE,
+        }
+    return {
+        "priorityWeights": _json_dict(result["priority_weights"], DEFAULT_PRIORITY_WEIGHTS),
+        "riskWeights": _json_dict(result["risk_weights"], DEFAULT_RISK_WEIGHTS),
+        "defaultVisibility": result["default_visibility"] or DEFAULT_VISIBILITY,
+        "defaultSensitive": result["default_sensitive"] if result["default_sensitive"] is not None else DEFAULT_SENSITIVE,
+    }
 
 
 @router.get("", response_model=Page)
@@ -52,14 +109,18 @@ async def get_company(company_id: UUID, tenant_id: str = Depends(require_tenant)
 async def create_company(body: CompanyCreate, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
     row = await db.execute(
         text("""
-            INSERT INTO twin.company (name, industry, region, legal_entity, tenant_id)
-            VALUES (:name, :industry, :region, :legal_entity, :tenant_id)
+            INSERT INTO twin.company (name, industry, legal_entity, tenant_id)
+            VALUES (:name, :industry, :legal_entity, :tenant_id)
             RETURNING *
         """),
         {**body.model_dump(), "tenant_id": tenant_id},
     )
+    company = dict(row.mappings().first())
+    
+    await seed_lookup_defaults(db, tenant_id, str(company["id"]))
+
     await db.commit()
-    return dict(row.mappings().first())
+    return company
 
 
 @router.patch("/{company_id}", response_model=Company)
@@ -175,6 +236,11 @@ async def delete_company(company_id: UUID, tenant_id: str = Depends(require_tena
             )
     except Exception:
         pass  # AGE cleanup is best-effort
+
+    # Delete this company's lookup picklist rows (status/priority/criticality/etc.)
+    # scoped to this exact tenant+company — never touches other companies'
+    # rows or tenant-wide (company_id IS NULL) rows.
+    await delete_lookup_defaults(db, tenant_id, cid)
 
     # Delete the company — Postgres cascades handle dim_node, dim_edge, source_ref
     await db.execute(

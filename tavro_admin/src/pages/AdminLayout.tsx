@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { Plug, Settings, ChevronLeft, ChevronRight, LogOut, Terminal, Layers, Building2, Server, CircleHelp, Tags, Boxes } from 'lucide-react';
+import { Plug, Settings, ChevronLeft, ChevronRight, LogOut, Terminal, Layers, Building2, Server, CircleHelp, Tags, Boxes, SlidersHorizontal } from 'lucide-react';
 import travoLogo from '../assets/travo_logo.png';
 
 const TAVRO_VERSION = '3.1';
@@ -139,6 +139,19 @@ const AdminLayout: React.FC = () => {
                         <Settings size={18} className="shrink-0" />
                         {!collapsed && <span>LLM Settings</span>}
                     </NavLink>
+                    <NavLink
+                        to="/company-preferences"
+                        className={({ isActive }) =>
+                            `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all border ${isActive
+                                ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-500/20'
+                                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white border-transparent'
+                            }`
+                        }
+                    >
+                        <SlidersHorizontal size={18} className="shrink-0" />
+                        {!collapsed && <span>Company Preferences</span>}
+                    </NavLink>
+
                     <NavLink
                         to="/reference-tables"
                         className={({ isActive }) =>
