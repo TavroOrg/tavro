@@ -1747,7 +1747,23 @@ async def delete_company(original_prompt: str, *, company_id: str) -> Dict[str, 
 # Keyed by job_id. This is intentionally just an in-memory dict (no DB/table) — it
 # only needs to survive for the lifetime of this MCP server process, to bridge the
 # "start" tool call and the later "check status" tool call for the same job.
+# Entries carry a "created_at" so they can be pruned once stale (see
+# _prune_stale_research_jobs) instead of accumulating forever.
 _research_jobs: Dict[str, Dict[str, Any]] = {}
+_RESEARCH_JOB_TTL_SECONDS = 60 * 60  # 1 hour — plenty of time for a check-in, small enough to not leak
+
+# asyncio.create_task() only holds a *weak* reference to the task in the event loop;
+# without a strong reference elsewhere, a fire-and-forget task can be garbage
+# collected before it completes. Keep every in-flight background task here and
+# have it remove itself when done, so scheduled research always runs to completion.
+_background_tasks: set = set()
+
+
+def _prune_stale_research_jobs() -> None:
+    """Drop job entries older than the TTL so _research_jobs doesn't grow forever."""
+    cutoff = time.time() - _RESEARCH_JOB_TTL_SECONDS
+    for stale_id in [jid for jid, job in _research_jobs.items() if job.get("created_at", 0) < cutoff]:
+        _research_jobs.pop(stale_id, None)
 
 
 async def _run_research_background(job_id: str, payload: Dict[str, Any], headers: Dict[str, str]) -> None:
@@ -1853,13 +1869,18 @@ async def research_blueprint(
         if tenant_id:
             headers["x-tenant-id"] = str(tenant_id)
 
+        _prune_stale_research_jobs()
+
         job_id = uuid.uuid4().hex
         _research_jobs[job_id] = {
             "status": "running",
             "company_id": company_id,
             "message": "Research started…",
+            "created_at": time.time(),
         }
-        asyncio.create_task(_run_research_background(job_id, payload, headers))
+        task = asyncio.create_task(_run_research_background(job_id, payload, headers))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
         return {
             "job_id": job_id,
