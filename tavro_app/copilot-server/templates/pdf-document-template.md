@@ -84,7 +84,7 @@ All Tavro PDFs share the same visual style as the Tavro Agent BizOps dashboard:
   - `[strategy]` for objectives, value, and priorities
   - `[risk]` and `[process]` for constraints and problem statements
   - `[technology]` and `[integration]` for architecture and implementation
-  - `[industry]` and `[region]` exactly as provided
+  - `[industry]` exactly as provided
 - Keep sections concise and specific. Avoid generic filler.
 
 ---

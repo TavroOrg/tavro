@@ -599,7 +599,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         companyId: activeCompany.id,
         companyName: activeCompany.name,
         industry: activeCompany.industry,
-        region: activeCompany.region,
         dimensions: nodes.slice(0, 30).map(n => ({
             label: n.label,
             category: n.category ?? 'custom',

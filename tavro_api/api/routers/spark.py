@@ -361,13 +361,11 @@ def _build_direction_prompt(
     count: int,
     company_name: str | None = None,
     industry: str | None = None,
-    region: str | None = None,
     edges: list[dict] | None = None,
 ) -> tuple[str, str]:
     """Return (system, user) prompts for direction-mode idea generation."""
     company_label = company_name or "the company"
     industry_label = industry or "enterprise operations"
-    region_clause = f" ({region})" if region else ""
 
     context_lines = "\n".join(
         f"  [{c['category'].upper()}] {c['label']}"
@@ -383,17 +381,13 @@ def _build_direction_prompt(
 
     system = (
         f"You are a senior AI implementation consultant specialising in {industry_label}. "
-        f"You are analysing {company_label}{region_clause}, a {industry_label} company. "
+        f"You are analysing {company_label}, a {industry_label} company. "
         f"Today's year is {CURRENT_YEAR}. Never reference past-year goals or stale targets. "
         "Generate specific, concrete, buildable AI use case ideas with measurable ROI. "
         "Do not generate agents here. Do not include agent names in titles. "
         "Each idea must name one specific AI capability — not vague phrases like 'leverage AI'."
     )
-    company_header = (
-        f"Company: {company_label} | Industry: {industry_label}"
-        + (f" | Region: {region}" if region else "")
-        + "\n\n"
-    )
+    company_header = f"Company: {company_label} | Industry: {industry_label}\n\n"
     user = (
         f"FOCUS: Generate exactly {count} distinct AI use case ideas, ALL specifically about: \"{direction}\"\n\n"
         f"{company_header}"
@@ -731,13 +725,11 @@ def _build_gap_prompt(
     direction: str | None = None,
     company_name: str | None = None,
     industry: str | None = None,
-    region: str | None = None,
     edges: list[dict] | None = None,
 ) -> tuple[str, str]:
     """Return (system, user) prompts for gap-analysis idea generation."""
     company_label = company_name or "the company"
     industry_label = industry or "enterprise operations"
-    region_clause = f" ({region})" if region else ""
 
     signals = [
         {
@@ -768,7 +760,7 @@ def _build_gap_prompt(
 
     system = (
         f"You are a senior AI implementation consultant specialising in {industry_label}. "
-        f"You are analysing {company_label}{region_clause}, a {industry_label} company. "
+        f"You are analysing {company_label}, a {industry_label} company. "
         f"Your job is to identify specific, high-ROI AI use case ideas that can realistically be implemented in 3–18 months. "
         f"Today's year is {CURRENT_YEAR}. "
         f"NEVER reference goals, targets, revenue plans, or milestones tied to years before {CURRENT_YEAR}. "
@@ -786,11 +778,7 @@ def _build_gap_prompt(
         "  • Scope-inflated: describes a full enterprise programme with no specific agent\n"
         "  • Disconnected: idea has no real link to the specific system named in the context signal"
     )
-    company_header = (
-        f"Company: {company_label} | Industry: {industry_label}"
-        + (f" | Region: {region}" if region else "")
-        + "\n\n"
-    )
+    company_header = f"Company: {company_label} | Industry: {industry_label}\n\n"
     user = (
         f"{company_header}"
         "For each signal below, generate ONE specific AI use case idea as a JSON object with exactly these fields:\n"
@@ -823,10 +811,9 @@ async def _enrich_with_claude(
     direction: str | None = None,
     company_name: str | None = None,
     industry: str | None = None,
-    region: str | None = None,
     edges: list[dict] | None = None,
 ) -> list[dict]:
-    system, user = _build_gap_prompt(candidates, direction, company_name, industry, region, edges)
+    system, user = _build_gap_prompt(candidates, direction, company_name, industry, edges)
     try:
         data = await _call_anthropic(api_key, [{"role": "user", "content": user}], system)
         raw_text = ""
@@ -849,11 +836,10 @@ async def _build_ideas(
     direction: str | None = None,
     company_name: str | None = None,
     industry: str | None = None,
-    region: str | None = None,
     edges: list[dict] | None = None,
 ) -> list[SparkIdea]:
     if api_key:
-        enriched = await _enrich_with_claude(unique, api_key, direction=direction, company_name=company_name, industry=industry, region=region, edges=edges)
+        enriched = await _enrich_with_claude(unique, api_key, direction=direction, company_name=company_name, industry=industry, edges=edges)
     else:
         enriched = [_basic_idea(c["node_id"], c["label"], c["category"], c.get("summary"), c["signal_type"], c["signal_label"]) for c in unique]
 
@@ -938,12 +924,11 @@ async def _generate_direction_ideas(
     count: int = SPARK_MAX_IDEAS,
     company_name: str | None = None,
     industry: str | None = None,
-    region: str | None = None,
     edges: list[dict] | None = None,
 ) -> list[SparkIdea]:
     """Direction-first generation: Claude produces ideas about the topic using company context."""
     node_lookup = {n["label"].lower(): n for n in company_nodes}
-    system, user = _build_direction_prompt(company_nodes, direction, count, company_name, industry, region, edges)
+    system, user = _build_direction_prompt(company_nodes, direction, count, company_name, industry, edges)
 
     try:
         data = await _call_anthropic(
@@ -1356,7 +1341,6 @@ async def generate_spark_ideas(
     idea_count: int = Query(SPARK_DEFAULT_IDEAS, ge=1, le=SPARK_MAX_IDEAS, description="Number of ideas to generate"),
     company_name: str | None = Query(None, description="Company display name from the blueprint"),
     industry: str | None = Query(None, description="Company industry from the blueprint"),
-    region: str | None = Query(None, description="Company region from the blueprint"),
     db: AsyncSession = Depends(get_db),
 ) -> list[SparkIdea]:
     """Generate fresh ideas from company context, persist to DB, return them."""
@@ -1371,18 +1355,18 @@ async def generate_spark_ideas(
         # Direction mode: Claude generates ideas *about* the topic using all company nodes as context.
         # Does not depend on which nodes happen to be randomly selected.
         company_nodes = await _fetch_all_company_nodes(db, company_id)
-        ideas = await _generate_direction_ideas(company_nodes, api_key, direction_clean, idea_count, company_name, industry, region, edges)
+        ideas = await _generate_direction_ideas(company_nodes, api_key, direction_clean, idea_count, company_name, industry, edges)
         if not ideas:
             # Fallback to normal flow if direction generation fails
             unique = await _collect_candidates(db, company_id, dim_filter, idea_count)
             all_agents = await _fetch_agents(db, tenant_id)
-            ideas = await _build_ideas(unique, all_agents, api_key, direction=direction_clean, company_name=company_name, industry=industry, region=region, edges=edges)
+            ideas = await _build_ideas(unique, all_agents, api_key, direction=direction_clean, company_name=company_name, industry=industry, edges=edges)
     else:
         unique = await _collect_candidates(db, company_id, dim_filter, idea_count)
         if not unique:
             return []
         all_agents = await _fetch_agents(db, tenant_id)
-        ideas = await _build_ideas(unique, all_agents, api_key, company_name=company_name, industry=industry, region=region, edges=edges)
+        ideas = await _build_ideas(unique, all_agents, api_key, company_name=company_name, industry=industry, edges=edges)
 
     if not ideas:
         return []
@@ -1418,7 +1402,6 @@ async def generate_spark_ideas_stream(
     idea_count: int = Query(SPARK_DEFAULT_IDEAS, ge=1, le=SPARK_MAX_IDEAS, description="Number of ideas to generate"),
     company_name: str | None = Query(None, description="Company display name from the blueprint"),
     industry: str | None = Query(None, description="Company industry from the blueprint"),
-    region: str | None = Query(None, description="Company region from the blueprint"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1441,7 +1424,7 @@ async def generate_spark_ideas_stream(
                 company_nodes = await _fetch_all_company_nodes(db, company_id)
                 # Build lookup: lowercase label -> node dict (for target_nodes resolution)
                 node_lookup = {n["label"].lower(): n for n in company_nodes}
-                system, user = _build_direction_prompt(company_nodes, direction_clean, idea_count, company_name, industry, region, edges)
+                system, user = _build_direction_prompt(company_nodes, direction_clean, idea_count, company_name, industry, edges)
 
                 buffer = ""
                 async for chunk in _stream_anthropic(
@@ -1494,7 +1477,7 @@ async def generate_spark_ideas_stream(
                     all_agents = await _fetch_agents(db, tenant_id)
 
                     if api_key:
-                        system, user = _build_gap_prompt(unique, direction_clean, company_name, industry, region, edges)
+                        system, user = _build_gap_prompt(unique, direction_clean, company_name, industry, edges)
                         buffer = ""
                         obj_index = 0
                         async for chunk in _stream_anthropic(

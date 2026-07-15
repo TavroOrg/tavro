@@ -36,7 +36,6 @@ function blueprintSection(data: BlueprintContext): string {
 ## Company Blueprint Context
 Company: ${data.companyName}
 Industry: ${data.industry}
-Region: ${data.region}
 ${activeSection}
 
 ## Current Blueprint Dimensions (${data.dimensions.length} total)
@@ -122,7 +121,7 @@ function compactBlueprintBlock(data: BlueprintContext): string {
     .join(', ');
   return `
 ## Company Blueprint (background context)
-Company: ${data.companyName} | Industry: ${data.industry} | Region: ${data.region}
+Company: ${data.companyName} | Industry: ${data.industry}
 Key dimensions: ${topDims || 'none defined yet'}${topEdges ? `\nKey relationships: ${topEdges}` : ''}`;
 }
 
