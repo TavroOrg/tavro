@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator
 from uuid import uuid4
 
@@ -24,12 +25,34 @@ from api.templates import INDUSTRY_TEMPLATES
 from api.llm_utils import (
     ANTHROPIC_MODEL, OPENAI_MODEL, RESEARCH_MAX_OUTPUT_TOKENS,
     _call_anthropic, _call_openai, _collect_text, _extract_json,
+    _sanitize_json_control_chars,
 )
 
 router = APIRouter()
 
 # RESEARCH_MAX_SEARCH_TURNS: max web-search round-trips (override via env var).
 RESEARCH_MAX_SEARCH_TURNS: int = int(os.getenv("RESEARCH_MAX_SEARCH_TURNS", "3"))
+
+# How far back to look for SEC filings, relative to *now* — computed fresh on every
+# call (never a fixed calendar year) so this stays correct indefinitely.
+SEC_SEARCH_LOOKBACK_YEARS: int = int(os.getenv("SEC_SEARCH_LOOKBACK_YEARS", "5"))
+
+
+def _today() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _today_str() -> str:
+    """Current UTC date as YYYY-MM-DD — used to ground the AI on 'now' so research
+    reasoning about the 'most recently completed fiscal year/quarter' is always
+    relative to the actual request date, not the model's training-data cutoff."""
+    return _today().strftime("%Y-%m-%d")
+
+
+def _sec_search_start_date() -> str:
+    """Rolling lower bound for SEC full-text search — always SEC_SEARCH_LOOKBACK_YEARS
+    before today, so it never goes stale like a hardcoded calendar date would."""
+    return (_today() - timedelta(days=365 * SEC_SEARCH_LOOKBACK_YEARS)).strftime("%Y-%m-%d")
 
 
 # =============================================================
@@ -157,11 +180,68 @@ def _collect_tool_results(data: dict) -> list[dict]:
     ]
 
 
+def _find_latest_filing(recent: dict, forms: tuple[str, ...], cik_int: int) -> dict | None:
+    """
+    Scan a submissions 'filings.recent' block for the first (most recent) filing
+    whose form matches one of `forms` (e.g. ("10-K", "20-F") or ("10-Q",)).
+    Returns {form, doc_url, filed_date, period} or None if not found.
+    """
+    for form, acc, doc, filed, period in zip(
+        recent.get("form",            []),
+        recent.get("accessionNumber", []),
+        recent.get("primaryDocument", []),
+        recent.get("filingDate",      []),
+        recent.get("reportDate",      []),
+    ):
+        if form in forms and doc:
+            acc_clean = acc.replace("-", "")
+            return {
+                "form":       form,
+                "doc_url":    (
+                    f"https://www.sec.gov/Archives/edgar/data/"
+                    f"{cik_int}/{acc_clean}/{doc}"
+                ),
+                "filed_date": filed,
+                "period":     period,
+            }
+    return None
+
+
+def _apply_submissions_metadata(result: dict, subs: dict, cik_int: int) -> None:
+    """
+    Shared parsing of the SEC submissions JSON: entity metadata plus the latest
+    annual report (10-K, or 20-F for foreign private issuers) and the latest
+    10-Q quarterly report.
+    """
+    result["sic_description"]        = subs.get("sicDescription", "")
+    result["state_of_incorporation"] = subs.get("stateOfIncorporationDescription", "")
+    result["fiscal_year_end"]        = subs.get("fiscalYearEnd", "")
+    biz = subs.get("addresses", {}).get("business", {})
+    result["hq"] = f"{biz.get('city','')}, {biz.get('stateOrCountry','')}".strip(", ")
+
+    recent = subs.get("filings", {}).get("recent", {})
+
+    annual = _find_latest_filing(recent, ("10-K", "20-F"), cik_int)
+    if annual:
+        result["annual_report_form"] = annual["form"]  # "10-K" or "20-F" (foreign private issuer)
+        result["doc_url"]            = annual["doc_url"]
+        result["latest_10k_date"]    = result.get("latest_10k_date") or annual["filed_date"]
+        result["latest_10k_period"]  = result.get("latest_10k_period") or annual["period"]
+
+    quarterly = _find_latest_filing(recent, ("10-Q",), cik_int)
+    if quarterly:
+        result["quarterly_report_form"] = quarterly["form"]
+        result["quarterly_doc_url"]     = quarterly["doc_url"]
+        result["quarterly_filed_date"]  = quarterly["filed_date"]
+        result["quarterly_period"]      = quarterly["period"]
+
+
 async def _fetch_sec_filing_info(ticker: str) -> dict:
     """
     Look up a public company on SEC EDGAR by ticker symbol.
-    Returns structured metadata + the direct URL of the latest 10-K document
-    so the AI can fetch it during web-search turns.
+    Returns structured metadata + the direct URLs of the latest annual report
+    (10-K, or 20-F for a foreign private issuer) and the latest 10-Q quarterly
+    report so the AI can fetch them during web-search turns.
 
     SEC EDGAR requires a User-Agent header identifying the caller.
     Docs: https://www.sec.gov/developer
@@ -172,9 +252,9 @@ async def _fetch_sec_filing_info(ticker: str) -> dict:
         async with httpx.AsyncClient(
             timeout=25.0, headers=headers, follow_redirects=True
         ) as client:
-            # ── Step 1: Search EDGAR for the ticker's 10-K filings ───────────
+            # ── Step 1: Search EDGAR for the ticker's annual-report filings ──
             url1 = "https://efts.sec.gov/LATEST/search-index"
-            params1 = {"q": f'"{ticker}"', "forms": "10-K", "dateRange": "custom", "startdt": "2021-01-01"}
+            params1 = {"q": f'"{ticker}"', "forms": "10-K,20-F", "dateRange": "custom", "startdt": _sec_search_start_date()}
             _logger.debug("[SEC/ticker] GET %s params=%s", url1, params1)
             search_resp = await client.get(url1, params=params1)
             _logger.debug("[SEC/ticker] step1 status=%s body=%s", search_resp.status_code, search_resp.text[:800])
@@ -210,37 +290,19 @@ async def _fetch_sec_filing_info(ticker: str) -> dict:
                 ),
             }
 
-            # ── Step 2: Company submissions → richer metadata + doc URL ──────
+            # ── Step 2: Company submissions → richer metadata + doc URLs ────
             url2 = f"https://data.sec.gov/submissions/CIK{cik_str}.json"
             _logger.debug("[SEC/ticker] GET %s", url2)
             subs_resp = await client.get(url2)
             _logger.debug("[SEC/ticker] step2 status=%s body_len=%d", subs_resp.status_code, len(subs_resp.text))
             if subs_resp.status_code == 200:
                 subs = subs_resp.json()
-                result["sic_description"]        = subs.get("sicDescription", "")
-                result["state_of_incorporation"] = subs.get("stateOfIncorporationDescription", "")
-                result["fiscal_year_end"]        = subs.get("fiscalYearEnd", "")
-                biz = subs.get("addresses", {}).get("business", {})
-                result["hq"] = (
-                    f"{biz.get('city','')}, {biz.get('stateOrCountry','')}".strip(", ")
+                _apply_submissions_metadata(result, subs, cik_int)
+                _logger.debug(
+                    "[SEC/ticker] step2 parsed: sic=%r hq=%r fy_end=%r annual_form=%r 10-Q=%r",
+                    result.get('sic_description'), result.get('hq'), result.get('fiscal_year_end'),
+                    result.get('annual_report_form'), result.get('quarterly_doc_url'),
                 )
-                _logger.debug("[SEC/ticker] step2 parsed: sic=%r hq=%r fy_end=%r",
-                              result['sic_description'], result['hq'], result['fiscal_year_end'])
-
-                recent = subs.get("filings", {}).get("recent", {})
-                for form, acc, doc in zip(
-                    recent.get("form",            []),
-                    recent.get("accessionNumber", []),
-                    recent.get("primaryDocument", []),
-                ):
-                    if form == "10-K" and doc:
-                        acc_clean = acc.replace("-", "")
-                        result["doc_url"] = (
-                            f"https://www.sec.gov/Archives/edgar/data/"
-                            f"{cik_int}/{acc_clean}/{doc}"
-                        )
-                        _logger.debug("[SEC/ticker] 10-K doc_url=%s", result['doc_url'])
-                        break
 
     except Exception as exc:
         _logger.error("[SEC/ticker] ERROR — %s: %s", type(exc).__name__, exc)
@@ -261,9 +323,9 @@ async def _search_sec_by_name(company_name: str) -> dict:
         async with httpx.AsyncClient(
             timeout=20.0, headers=headers, follow_redirects=True
         ) as client:
-            # ── Step 1: Full-text search for recent 10-K filings ─────────────
+            # ── Step 1: Full-text search for recent annual-report filings ────
             url1 = "https://efts.sec.gov/LATEST/search-index"
-            params1 = {"q": f'"{company_name}"', "forms": "10-K", "dateRange": "custom", "startdt": "2022-01-01"}
+            params1 = {"q": f'"{company_name}"', "forms": "10-K,20-F", "dateRange": "custom", "startdt": _sec_search_start_date()}
             _logger.debug("[SEC/name] GET %s params=%s", url1, params1)
             search_resp = await client.get(url1, params=params1)
             _logger.debug("[SEC/name] step1 status=%s body=%s", search_resp.status_code, search_resp.text[:800])
@@ -299,40 +361,22 @@ async def _search_sec_by_name(company_name: str) -> dict:
                 ),
             }
 
-            # ── Step 2: Submissions API → richer metadata + ticker + doc URL ─
+            # ── Step 2: Submissions API → richer metadata + ticker + doc URLs ─
             url2 = f"https://data.sec.gov/submissions/CIK{cik_str}.json"
             _logger.debug("[SEC/name] GET %s", url2)
             subs_resp = await client.get(url2)
             _logger.debug("[SEC/name] step2 status=%s body_len=%d", subs_resp.status_code, len(subs_resp.text))
             if subs_resp.status_code == 200:
                 subs = subs_resp.json()
-                result["sic_description"]        = subs.get("sicDescription", "")
-                result["state_of_incorporation"] = subs.get("stateOfIncorporationDescription", "")
-                result["fiscal_year_end"]        = subs.get("fiscalYearEnd", "")
-                biz = subs.get("addresses", {}).get("business", {})
-                result["hq"] = (
-                    f"{biz.get('city','')}, {biz.get('stateOrCountry','')}".strip(", ")
-                )
+                _apply_submissions_metadata(result, subs, cik_int)
                 tickers = subs.get("tickers", [])
                 if tickers:
                     result["ticker"] = tickers[0]
-                _logger.debug("[SEC/name] step2 parsed: sic=%r hq=%r tickers=%s",
-                              result['sic_description'], result['hq'], tickers)
-
-                recent = subs.get("filings", {}).get("recent", {})
-                for form, acc, doc in zip(
-                    recent.get("form",            []),
-                    recent.get("accessionNumber", []),
-                    recent.get("primaryDocument", []),
-                ):
-                    if form == "10-K" and doc:
-                        acc_clean = acc.replace("-", "")
-                        result["doc_url"] = (
-                            f"https://www.sec.gov/Archives/edgar/data/"
-                            f"{cik_int}/{acc_clean}/{doc}"
-                        )
-                        _logger.debug("[SEC/name] 10-K doc_url=%s", result['doc_url'])
-                        break
+                _logger.debug(
+                    "[SEC/name] step2 parsed: sic=%r hq=%r tickers=%s annual_form=%r 10-Q=%r",
+                    result.get('sic_description'), result.get('hq'), tickers,
+                    result.get('annual_report_form'), result.get('quarterly_doc_url'),
+                )
 
     except Exception as exc:
         _logger.error("[SEC/name] ERROR — %s: %s", type(exc).__name__, exc)
@@ -517,6 +561,11 @@ Rules:
 - Use qualitative descriptions and industry-typical ranges where appropriate
 - Summaries: 2-3 sentences maximum, plain text, no bullet points, no line breaks inside a summary
 - Tags: lowercase, hyphen-separated, max 5 per node
+- If this is a private bank or depository institution, add a "finance" node noting that
+  regulatory financial filings — the Call Report (Consolidated Reports of Condition and
+  Income), filed quarterly with the FFIEC — may be publicly available via the FFIEC Central
+  Data Repository (https://cdr.ffiec.gov/public/ManageFacsimiles.aspx), and should be treated
+  as the primary regulatory financial source in place of SEC filings.
 - Return ONLY the raw JSON object. No markdown. No code fences. No backticks.
 Start your response with { and end with }."""
 
@@ -524,9 +573,16 @@ Start your response with { and end with }."""
 PUBLIC_RESEARCH_SYSTEM = """You are a business analyst AI helping populate a Company Blueprint
 for an enterprise AI governance platform called Tavro.
 
-This is a PUBLICLY LISTED company. You MUST base your research on official SEC filings,
-specifically the company's most recent 10-K annual report on SEC EDGAR. Do not rely on
-general knowledge — retrieve the actual filing from the URL(s) provided in the prompt.
+This is a PUBLICLY LISTED company. You MUST base your research on official filings and investor
+communications — do not rely on general knowledge. Retrieve the actual documents from the
+URL(s) provided in the prompt, or search the web for them, covering:
+
+1. Most recently completed fiscal year — the Annual Report and Form 10-K (U.S. issuers) or
+   Form 20-F (foreign private issuers) on SEC EDGAR.
+2. Most recently completed fiscal quarter — the Form 10-Q, the quarterly earnings press
+   release, and the earnings call transcript.
+3. Investor presentations — the most recent investor presentation deck and any Capital
+   Markets Day / Investor Day presentation and related materials.
 
 Return ONLY a JSON object (no prose, no markdown fences, no explanation):
 
@@ -541,28 +597,94 @@ Return ONLY a JSON object (no prose, no markdown fences, no explanation):
       "sensitive": false
     }
   ],
-  "sources": ["10-K FY2024 (SEC EDGAR)", "DEF 14A 2024"],
-  "notice": "One sentence noting this is sourced from SEC EDGAR filings."
+  "sources": ["10-K FY<year> (SEC EDGAR)", "10-Q Q<n> FY<year>", "Q<n> FY<year> Earnings Call Transcript", "Investor Presentation <month year>", "DEF 14A <year>"],
+  "notice": "One sentence noting this is sourced from SEC EDGAR filings and investor communications."
 }
 
-Categories to include (draw directly from the 10-K):
-- "profile": exactly 1 node — legal name, state of incorporation, HQ, employee count,
-  fiscal year-end, principal markets (from Item 1 Business section)
-- "strategy": 3-5 nodes — each node is one major strategic priority stated in the
-  10-K (Item 1 Business, Item 7 MD&A, or earnings communications)
+Categories to include (draw from the sources listed above):
+- "profile": exactly 1 node — legal name, state/country of incorporation, HQ, employee count,
+  fiscal year-end, principal markets (from the Annual Report/10-K/20-F Item 1 Business section)
+- "strategy": 3-5 nodes — each node is one major strategic priority stated in the Annual
+  Report/10-K/20-F (Item 1 Business, Item 7 MD&A), the most recent earnings call transcript,
+  or an investor/Capital Markets Day presentation
 - "organisation": 3-6 nodes — each node is one reportable business segment or major
-  division as disclosed in the 10-K segment footnotes
-- "finance": 3-5 nodes — draw from Item 8 Financial Statements and Item 7 MD&A:
-  annual revenue, net income / EPS, key balance sheet metrics (total assets, long-term
-  debt), capital allocation (dividends, buybacks), and any significant financial trends
+  division as disclosed in the Annual Report/10-K/20-F segment footnotes
+- "finance": 4-7 nodes — MUST include at least one node from each of the two mandatory
+  groups below, plus optional supporting nodes:
+    1. MANDATORY — previous fiscal year (the most recently completed fiscal year, whatever
+       that year actually is for this company): at least 1 node from the Annual Report/10-K/20-F
+       (Item 8 Financial Statements, Item 7 MD&A) covering annual revenue, net income/EPS, key
+       balance sheet metrics (total assets, long-term debt), capital allocation (dividends,
+       buybacks), and significant financial trends for that fiscal year.
+    2. MANDATORY — latest quarter (the most recently completed fiscal quarter, whatever quarter
+       that actually is — it may already fall within the new fiscal year): at least 1 node from
+       the Form 10-Q, quarterly earnings report, and earnings call transcript covering quarterly
+       revenue/EPS, sequential and year-over-year performance, management commentary, and any
+       updated guidance.
+    3. Optional — forward-looking or segment detail from investor presentations / Capital
+       Markets Day materials not already captured above.
+  Never invent or assume which year/quarter is "current" — always derive the actual fiscal
+  year-end and quarter-end dates from the source documents provided or retrieved.
+  If the company is a bank/financial institution, note any regulatory financial filings
+  referenced (e.g. FR Y-9C, Call Report) in addition to SEC filings.
 
 Rules:
-- Base summaries on the actual 10-K text; cite the filing year in each summary
-- Use specific numbers (e.g. "$5.2B revenue FY2023") where disclosed
+- Base summaries on the actual filing/transcript/presentation text; cite the fiscal period
+  (year and quarter) in each summary
+- Treat "Form 20-F" as the foreign-private-issuer equivalent of the 10-K annual report
+- Use specific numbers with the actual fiscal period disclosed in the source document
+  (e.g. "$5.2B revenue FY<year>", "$1.3B revenue Q<n> FY<year>") — always the real year/quarter
+  from the filing, never assumed or copied from these examples
 - Summaries: 2-5 sentences, plain text, no bullet points
 - Tags: lowercase, hyphen-separated, max 8 per node
 - Return ONLY the raw JSON object. No markdown. No code fences. No backticks.
 Start your response with { and end with }."""
+
+
+# =============================================================
+# Structured-output tool — used instead of free-text JSON so the Anthropic
+# API itself enforces valid, schema-conformant output. Hand-written JSON in
+# prose is prone to truncation/formatting errors on long research responses
+# (unescaped quotes in citations, imperfect continuation merges, etc.); a
+# tool call's `input` is parsed and validated by Anthropic server-side, so it
+# can never come back as malformed JSON the way free text can.
+# =============================================================
+
+BLUEPRINT_RESULT_TOOL: dict = {
+    "name": "submit_blueprint_research",
+    "description": (
+        "Submit the final set of Blueprint dimension nodes for this company, along with "
+        "the sources used and a one-sentence notice. Call this exactly once, only when "
+        "you have finished any necessary research (filings, web search) and are ready to "
+        "give your final answer."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "nodes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "category": {
+                            "type": "string",
+                            "enum": ["profile", "strategy", "organisation", "finance"],
+                        },
+                        "label":      {"type": "string"},
+                        "summary":    {"type": "string"},
+                        "tags":       {"type": "array", "items": {"type": "string"}},
+                        "visibility": {"type": "string", "enum": ["internal", "restricted", "public"]},
+                        "sensitive":  {"type": "boolean"},
+                    },
+                    "required": ["category", "label", "summary", "tags"],
+                },
+            },
+            "sources": {"type": "array", "items": {"type": "string"}},
+            "notice":  {"type": "string"},
+        },
+        "required": ["nodes", "sources", "notice"],
+    },
+}
 
 
 # =============================================================
@@ -611,6 +733,9 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                 return
 
             is_public = body.is_public or bool(body.ticker)
+            # Word-boundary match so "Databank"/"Riverbank"/"Bankruptcy Services" etc. aren't
+            # misclassified as banks (a plain substring check would match all of them).
+            is_bank   = bool(re.search(r"\bbank(ing)?\b", body.industry, re.IGNORECASE))
 
             # ── Request banner ───────────────────────────────────────────────
             log("=" * 60)
@@ -619,6 +744,7 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
             log(f"  industry     : {body.industry!r}")
             log(f"  ticker       : {body.ticker!r}")
             log(f"  is_public    : {is_public}  (body.is_public={body.is_public}, ticker={'yes' if body.ticker else 'no'})")
+            log(f"  is_bank      : {is_bank}")
             log(f"  provider     : {provider}")
             log(f"  max_tokens   : {RESEARCH_MAX_OUTPUT_TOKENS}")
             log(f"  max_turns    : {RESEARCH_MAX_SEARCH_TURNS}")
@@ -655,51 +781,86 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
 
             # ── Build prompts ────────────────────────────────────────────────
             if is_public:
+                annual_form = sec_ctx.get("annual_report_form", "10-K")
                 sec_block = ""
                 if sec_ctx:
                     sec_block = (
                         f"\nSEC EDGAR Data (use these official sources — do NOT skip them):\n"
-                        f"  Registered name : {sec_ctx.get('entity_name', body.company_name)}\n"
-                        f"  CIK             : {sec_ctx.get('cik', 'unknown')}\n"
-                        f"  HQ              : {sec_ctx.get('hq', '')}\n"
-                        f"  SIC description : {sec_ctx.get('sic_description', '')}\n"
-                        f"  State of incorp : {sec_ctx.get('state_of_incorporation', '')}\n"
-                        f"  Fiscal year end : {sec_ctx.get('fiscal_year_end', '')}\n"
-                        f"  Latest 10-K     : filed {sec_ctx.get('latest_10k_date', '')} "
+                        f"  Registered name  : {sec_ctx.get('entity_name', body.company_name)}\n"
+                        f"  CIK              : {sec_ctx.get('cik', 'unknown')}\n"
+                        f"  HQ               : {sec_ctx.get('hq', '')}\n"
+                        f"  SIC description  : {sec_ctx.get('sic_description', '')}\n"
+                        f"  State of incorp  : {sec_ctx.get('state_of_incorporation', '')}\n"
+                        f"  Fiscal year end  : {sec_ctx.get('fiscal_year_end', '')}\n"
+                        f"  Annual report    : {annual_form} filed {sec_ctx.get('latest_10k_date', '')} "
                         f"(period ending {sec_ctx.get('latest_10k_period', '')})\n"
-                        f"  10-K document   : {sec_ctx.get('doc_url', '')}\n"
-                        f"  EDGAR filings   : {sec_ctx.get('filing_browser_url', '')}\n"
+                        f"  Annual doc URL   : {sec_ctx.get('doc_url', '')}\n"
+                        f"  Latest 10-Q      : filed {sec_ctx.get('quarterly_filed_date', 'unknown')} "
+                        f"(period ending {sec_ctx.get('quarterly_period', 'unknown')})\n"
+                        f"  10-Q document URL: {sec_ctx.get('quarterly_doc_url', 'not found — search the web for the most recent 10-Q')}\n"
+                        f"  EDGAR filings    : {sec_ctx.get('filing_browser_url', '')}\n"
                     )
                     instruction = (
-                        "Fetch the 10-K document URL above and read Item 1 (Business), "
-                        "Item 7 (MD&A), and Item 8 (Financial Statements). "
-                        "Base your nodes on facts from that document."
+                        f"Fetch the {annual_form} document URL above and read the Business, "
+                        "MD&A, and Financial Statements sections for the most recently completed "
+                        "fiscal year. Then fetch the 10-Q document URL above (if present) for the "
+                        "most recently completed fiscal quarter. Also search the web for the most "
+                        "recent quarterly earnings press release, earnings call transcript, and any "
+                        "investor presentation deck or Capital Markets Day / Investor Day materials. "
+                        "Base your nodes on facts from these documents."
                     )
                 else:
                     instruction = (
                         f"Search SEC EDGAR (https://www.sec.gov/cgi-bin/browse-edgar?"
                         f"action=getcompany&company=&CIK={body.ticker}&type=10-K&dateb="
-                        f"&owner=include&count=5) for the latest 10-K filing. "
-                        "Base your nodes on the actual 10-K content."
+                        f"&owner=include&count=5) for the latest annual report (10-K or 20-F) and "
+                        "the latest 10-Q. Also search the web for the most recent quarterly earnings "
+                        "report, earnings call transcript, and any investor presentation deck or "
+                        "Capital Markets Day materials. Base your nodes on the actual filing content."
+                    )
+                if is_bank:
+                    instruction += (
+                        " This is a bank/financial institution — also search for any regulatory "
+                        "financial filings referenced (e.g. FR Y-9C, FFIEC Call Report) alongside "
+                        "the SEC filings."
                     )
                 user_prompt = (
-                    f"Research this PUBLIC company using its SEC EDGAR 10-K filing "
-                    f"and return the Blueprint JSON:\n\n"
+                    f"Today's date : {_today_str()}\n"
+                    f"Research this PUBLIC company using its SEC EDGAR {annual_form} filing, "
+                    f"most recent 10-Q, and investor communications, then return the Blueprint "
+                    f"JSON:\n\n"
                     f"Company : {body.company_name}\n"
                     f"Ticker  : {body.ticker}\n"
                     f"Industry: {body.industry}\n"
                     f"{sec_block}\n"
                     f"{instruction}\n\n"
+                    f"Use today's date above to determine what 'most recently completed fiscal "
+                    f"year' and 'most recently completed fiscal quarter' actually mean right now "
+                    f"— do not assume a particular year from memory.\n\n"
                     f"Return ONLY the JSON object — no other text."
                 )
                 system_prompt = PUBLIC_RESEARCH_SYSTEM
             else:
+                bank_note = ""
+                if is_bank:
+                    bank_note = (
+                        "\nThis is a PRIVATE bank/depository institution. It likely does not file "
+                        "with the SEC, but as an FDIC/Federal Reserve-regulated institution it may "
+                        "file a Call Report (Consolidated Reports of Condition and Income) with the "
+                        "FFIEC. Reference the FFIEC Central Data Repository "
+                        "(https://cdr.ffiec.gov/public/ManageFacsimiles.aspx) as the source for this "
+                        "regulatory financial filing in the finance dimension, where applicable.\n"
+                    )
                 user_prompt = (
+                    f"Today's date : {_today_str()}\n"
                     f"Generate baseline Blueprint dimensions for this PRIVATE company:\n\n"
                     f"Company : {body.company_name}\n"
-                    f"Industry: {body.industry}\n\n"
+                    f"Industry: {body.industry}\n"
+                    f"{bank_note}\n"
                     f"Do NOT use web search. Use your knowledge of this industry to generate "
                     f"plausible Profile, Strategy, Organisation, and Finance dimensions. "
+                    f"Use today's date above (not any date from your training data) if you "
+                    f"reference timeframes such as 'current' or 'recent'. "
                     f"Return ONLY the JSON object — no other text."
                 )
                 system_prompt = PRIVATE_RESEARCH_SYSTEM
@@ -711,13 +872,32 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
             # Public:  SEC EDGAR + web search up to RESEARCH_MAX_SEARCH_TURNS + full tokens
             max_turns  = RESEARCH_MAX_SEARCH_TURNS if is_public else 0
             max_tokens = RESEARCH_MAX_OUTPUT_TOKENS if is_public else min(RESEARCH_MAX_OUTPUT_TOKENS, 2500)
-            tools = [{"type": "web_search_20250305", "name": "web_search"}] \
-                    if (is_public and provider == "anthropic" and max_turns > 0) else None
+
+            # Anthropic: always require the final answer via the structured
+            # submit_blueprint_research tool, so the API guarantees valid JSON instead of
+            # relying on hand-written prose JSON (the actual source of the intermittent
+            # parse errors — truncation and formatting slips on long free-text output).
+            # Web search stays available as an additional tool for public companies so the
+            # model can still research before calling submit_blueprint_research.
+            use_structured_tool = provider == "anthropic"
+            tools: list[dict] | None = None
+            tool_choice: dict | None = None
+            if use_structured_tool:
+                tools = []
+                if is_public and max_turns > 0:
+                    tools.append({"type": "web_search_20250305", "name": "web_search"})
+                tools.append(BLUEPRINT_RESULT_TOOL)
+                if not is_public:
+                    # Nothing to search for — force the structured result immediately.
+                    tool_choice = {"type": "tool", "name": BLUEPRINT_RESULT_TOOL["name"]}
+            elif is_public and max_turns > 0:
+                tools = [{"type": "web_search_20250305", "name": "web_search"}]
 
             # ── Prompt/tools banner ──────────────────────────────────────────
             log("-" * 60)
             log(f"SYSTEM PROMPT    : {'PUBLIC_RESEARCH_SYSTEM' if is_public else 'PRIVATE_RESEARCH_SYSTEM'}")
-            log(f"WEB SEARCH TOOLS : {'ENABLED' if tools else 'DISABLED (private — pure generation)'}")
+            log(f"STRUCTURED TOOL  : {'ENABLED' if use_structured_tool else 'DISABLED (openai — legacy free-text JSON)'}")
+            log(f"WEB SEARCH TOOLS : {'ENABLED' if (is_public and max_turns > 0) else 'DISABLED (private — pure generation)'}")
             log(f"MAX SEARCH TURNS : {max_turns}")
             log(f"MAX TOKENS       : {max_tokens}")
             log(f"SEC PATH         : {'YES — ticker lookup + EDGAR' if is_public else 'NO — private company, skipped'}")
@@ -734,7 +914,10 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                     if provider == "openai":
                         data = await _call_openai(api_key, messages, system_prompt, max_tokens)
                     else:
-                        data = await _call_anthropic(api_key, messages, system_prompt, tools, max_tokens)
+                        data = await _call_anthropic(
+                            api_key, messages, system_prompt, tools, max_tokens,
+                            tool_choice=tool_choice,
+                        )
                     last_exc = None
                     break
                 except Exception as exc:
@@ -763,116 +946,191 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                 raise last_exc  # public company — still surface the error
             log(f"Turn 1 done — stop_reason={data.get('stop_reason')} usage={data.get('usage',{})}")
             turns_used = 0
+            parsed: dict | None = None
 
-            # ── Follow-up web-search turns ───────────────────────────────────
-            while (provider == "anthropic"
-                   and data.get("stop_reason") == "tool_use"
-                   and turns_used < max_turns):
-                tool_results = _collect_tool_results(data)
-                if not tool_results:
-                    break
-                turns_used += 1
-                log(f"Web-search turn {turns_used}/{max_turns}")
-                await emit({"type": "status",
-                            "message": f"AI searching the web (pass {turns_used} of {max_turns})…"})
-                messages.append({"role": "assistant", "content": data["content"]})
-                messages.append({"role": "user",      "content": tool_results})
-                data = await _call_anthropic(api_key, messages, system_prompt, tools, max_tokens)
-                log(f"Search turn {turns_used} done — stop_reason={data.get('stop_reason')}")
-
-            # ── Force answer if turn cap hit ─────────────────────────────────
-            if provider == "anthropic" and data.get("stop_reason") == "tool_use":
-                tool_results = _collect_tool_results(data)
-                if tool_results:
-                    log("Turn cap hit — forcing final answer without tools")
-                    await emit({"type": "status",
-                                "message": "Web-search limit reached — compiling results…"})
-                    messages.append({"role": "assistant", "content": data["content"]})
-                    messages.append({
-                        "role": "user",
-                        "content": [{
-                            **tr,
-                            "content": (
-                                "Search limit reached. Using information gathered so far, "
-                                "return ONLY the JSON object now."
-                            ),
-                        } for tr in tool_results],
-                    })
-                    data = await _call_anthropic(
-                        api_key, messages, system_prompt,
-                        tools=None,
-                        max_tokens=max_tokens,
+            # ── Structured-tool loop (Anthropic) ─────────────────────────────
+            # Loop until the model calls submit_blueprint_research (guaranteed valid,
+            # schema-conformant JSON from the API itself), handling web-search turns and
+            # truncation along the way. Bounded by max_turns (search) and a small cap on
+            # forced-answer/retry attempts so this can never spin forever.
+            if use_structured_tool:
+                force_attempts = 0
+                while True:
+                    blocks = [b for b in data.get("content", []) if b.get("type") == "tool_use"]
+                    schema_block = next(
+                        (b for b in blocks if b.get("name") == BLUEPRINT_RESULT_TOOL["name"]), None
                     )
-                    log(f"Final forced answer — stop_reason={data.get('stop_reason')}")
 
-            # ── Extract text ─────────────────────────────────────────────────
-            raw_text = _collect_text(data)
-            log(f"Raw AI response ({len(raw_text)} chars):\n"
-                f"{'─'*60}\n{raw_text}\n{'─'*60}")
-            if not raw_text:
-                log("ERROR — AI returned empty text")
-                await queue.put({"type": "error",
-                                 "message": "AI returned an empty response. Please try again."})
-                return
+                    # A tool_use block only represents a *complete* answer when generation
+                    # finished normally (stop_reason == "tool_use"). If the response was cut
+                    # off by the token limit while the model was still writing the tool's
+                    # arguments, Anthropic can still return a tool_use block, but its `input`
+                    # may be incomplete or empty. Accepting that as-is — without checking
+                    # stop_reason or that it actually contains nodes — is exactly what
+                    # produced empty "0 of 0 dimensions" results with the default notice
+                    # text (meaning "notice" was missing from a truncated/degenerate input).
+                    if (schema_block is not None
+                            and data.get("stop_reason") == "tool_use"
+                            and (schema_block.get("input") or {}).get("nodes")):
+                        parsed = schema_block["input"]
+                        log(f"Structured result received via '{BLUEPRINT_RESULT_TOOL['name']}' tool call "
+                            f"— {len(parsed.get('nodes', []))} nodes")
+                        break
 
-            # ── Parse JSON ───────────────────────────────────────────────────
-            log("Parsing JSON response")
-            await emit({"type": "status", "message": "Parsing results…"})
-            cleaned = raw_text.strip()
-            if cleaned.startswith("```"):
-                cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-                cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+                    if schema_block is not None and data.get("stop_reason") == "tool_use":
+                        # Tool was called but returned no usable nodes — never silently accept
+                        # an empty result; ask the model to resubmit, bounded by force_attempts.
+                        if force_attempts < 3:
+                            force_attempts += 1
+                            log("Structured tool call returned no/empty nodes — asking model to resubmit "
+                                f"(attempt {force_attempts})")
+                            await emit({"type": "status",
+                                        "message": "AI returned an incomplete result — retrying…"})
+                            messages.append({"role": "assistant", "content": data["content"]})
+                            # Every tool_use block from this turn needs a matching tool_result
+                            # (Anthropic rejects the request otherwise) — not just the schema
+                            # block, in case a web_search call was also made in the same turn.
+                            tool_results = _collect_tool_results(data)
+                            for tr in tool_results:
+                                if tr["tool_use_id"] == schema_block["id"]:
+                                    tr["content"] = (
+                                        "That submission had an empty or missing 'nodes' array, which "
+                                        "is invalid. Call submit_blueprint_research again with the full "
+                                        "set of dimension nodes as instructed."
+                                    )
+                            messages.append({"role": "user", "content": tool_results})
+                            data = await _call_anthropic(
+                                api_key, messages, system_prompt,
+                                tools=[BLUEPRINT_RESULT_TOOL], max_tokens=max_tokens,
+                                tool_choice={"type": "tool", "name": BLUEPRINT_RESULT_TOOL["name"]},
+                            )
+                            continue
+                        log("Giving up after repeated empty structured results — "
+                            "falling back to free-text JSON parsing")
+                        break
 
-            extracted = _extract_json(cleaned)
-
-            # Truncation recovery
-            if data.get("stop_reason") == "max_tokens":
-                try:
-                    json.loads(extracted)
-                    log("max_tokens but JSON is valid — no continuation needed")
-                except json.JSONDecodeError:
-                    log("max_tokens AND JSON truncated — requesting continuation")
-                    await emit({"type": "status",
-                                "message": "Response was truncated — requesting continuation…"})
-                    messages.append({"role": "assistant", "content": raw_text})
-                    messages.append({"role": "user", "content": (
-                        "Your previous response was cut off before the JSON was complete. "
-                        "Please continue and complete the JSON object from where you left off. "
-                        "Return ONLY the continuation — no preamble, no backticks."
-                    )})
-                    if provider == "openai":
-                        cont_data = await _call_openai(
-                            api_key, messages, system_prompt, max_tokens
-                        )
-                    else:
-                        cont_data = await _call_anthropic(
+                    if data.get("stop_reason") == "max_tokens" and force_attempts < 2:
+                        force_attempts += 1
+                        max_tokens = max_tokens + RESEARCH_MAX_OUTPUT_TOKENS
+                        log(f"Structured response truncated before completion — retrying with "
+                            f"max_tokens={max_tokens} (attempt {force_attempts})")
+                        await emit({"type": "status",
+                                    "message": "Response was truncated — retrying with a larger budget…"})
+                        data = await _call_anthropic(
                             api_key, messages, system_prompt,
-                            tools=None,
-                            max_tokens=max_tokens,
+                            tools=[BLUEPRINT_RESULT_TOOL], max_tokens=max_tokens,
+                            tool_choice={"type": "tool", "name": BLUEPRINT_RESULT_TOOL["name"]},
                         )
-                    continuation = _collect_text(cont_data).strip()
-                    log(f"Continuation length: {len(continuation)} chars")
-                    merged = raw_text.rstrip() + continuation
-                    extracted = _extract_json(merged)
+                        continue
 
-            # Strip invalid control characters (raw newlines/tabs inside string values)
-            # that Claude occasionally emits in long summaries, causing JSONDecodeError.
-            sanitized = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', extracted)
+                    if data.get("stop_reason") != "tool_use":
+                        log("Model did not return a structured tool call — "
+                            "falling back to free-text JSON parsing")
+                        break
 
-            try:
-                parsed = json.loads(sanitized)
-            except json.JSONDecodeError as e:
-                log(f"ERROR — JSON parse failed: {e} | snippet: {sanitized[:300]!r}")
-                await queue.put({"type": "error",
-                                 "message": f"JSON parse error: {str(e)[:200]}"})
-                return
+                    search_blocks = [b for b in blocks if b.get("name") == "web_search"]
+                    if search_blocks and turns_used < max_turns:
+                        turns_used += 1
+                        log(f"Web-search turn {turns_used}/{max_turns}")
+                        await emit({"type": "status",
+                                    "message": f"AI searching the web (pass {turns_used} of {max_turns})…"})
+                        tool_results = _collect_tool_results(data)
+                        messages.append({"role": "assistant", "content": data["content"]})
+                        messages.append({"role": "user",      "content": tool_results})
+                        data = await _call_anthropic(api_key, messages, system_prompt, tools, max_tokens)
+                        log(f"Search turn {turns_used} done — stop_reason={data.get('stop_reason')}")
+                        continue
+
+                    if force_attempts < 3:
+                        force_attempts += 1
+                        log("Turn cap hit — forcing final structured answer")
+                        await emit({"type": "status",
+                                    "message": "Web-search limit reached — compiling results…"})
+                        tool_results = _collect_tool_results(data)
+                        messages.append({"role": "assistant", "content": data["content"]})
+                        messages.append({"role": "user",      "content": tool_results})
+                        data = await _call_anthropic(
+                            api_key, messages, system_prompt,
+                            tools=[BLUEPRINT_RESULT_TOOL], max_tokens=max_tokens,
+                            tool_choice={"type": "tool", "name": BLUEPRINT_RESULT_TOOL["name"]},
+                        )
+                        continue
+
+                    log("Giving up on structured tool call after repeated attempts — "
+                        "falling back to free-text JSON parsing")
+                    break
+
+            if parsed is None:
+                # ── Legacy free-text JSON path ───────────────────────────────
+                # Fallback for providers/situations where the structured tool call wasn't
+                # used (OpenAI, or the rare case where Anthropic still answered in prose).
+                raw_text = _collect_text(data)
+                log(f"Raw AI response ({len(raw_text)} chars):\n"
+                    f"{'─'*60}\n{raw_text}\n{'─'*60}")
+                if not raw_text:
+                    log("ERROR — AI returned empty text")
+                    await queue.put({"type": "error",
+                                     "message": "AI returned an empty response. Please try again."})
+                    return
+
+                # ── Parse JSON ───────────────────────────────────────────────
+                log("Parsing JSON response")
+                await emit({"type": "status", "message": "Parsing results…"})
+                cleaned = raw_text.strip()
+                if cleaned.startswith("```"):
+                    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+                    cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+
+                extracted = _extract_json(cleaned)
+
+                # Truncation recovery
+                if data.get("stop_reason") == "max_tokens":
+                    try:
+                        json.loads(extracted)
+                        log("max_tokens but JSON is valid — no continuation needed")
+                    except json.JSONDecodeError:
+                        log("max_tokens AND JSON truncated — requesting continuation")
+                        await emit({"type": "status",
+                                    "message": "Response was truncated — requesting continuation…"})
+                        messages.append({"role": "assistant", "content": raw_text})
+                        messages.append({"role": "user", "content": (
+                            "Your previous response was cut off before the JSON was complete. "
+                            "Please continue and complete the JSON object from where you left off. "
+                            "Return ONLY the continuation — no preamble, no backticks."
+                        )})
+                        if provider == "openai":
+                            cont_data = await _call_openai(
+                                api_key, messages, system_prompt, max_tokens
+                            )
+                        else:
+                            cont_data = await _call_anthropic(
+                                api_key, messages, system_prompt,
+                                tools=None,
+                                max_tokens=max_tokens,
+                            )
+                        continuation = _collect_text(cont_data).strip()
+                        log(f"Continuation length: {len(continuation)} chars")
+                        merged = raw_text.rstrip() + continuation
+                        extracted = _extract_json(merged)
+
+                # Escape raw control characters (newlines/tabs) inside string values —
+                # models occasionally emit these in long summaries, causing JSONDecodeError.
+                sanitized = _sanitize_json_control_chars(extracted)
+
+                try:
+                    parsed = json.loads(sanitized)
+                except json.JSONDecodeError as e:
+                    log(f"ERROR — JSON parse failed: {e} | snippet: {sanitized[:300]!r}")
+                    await queue.put({"type": "error",
+                                     "message": f"JSON parse error: {str(e)[:200]}"})
+                    return
 
             result = ResearchResponse(
                 nodes=[ResearchedNode(**n) for n in parsed.get("nodes", [])],
                 sources=parsed.get("sources", []),
                 notice=parsed.get("notice", "AI-generated from public sources — please verify before use."),
                 turns_used=turns_used,
-                tokens_cap=RESEARCH_MAX_OUTPUT_TOKENS,
+                tokens_cap=max_tokens,
             )
             log("=" * 60)
             log(f"RESEARCH RESULT — {'PUBLIC' if is_public else 'PRIVATE'} company: {body.company_name!r}")
@@ -1236,7 +1494,7 @@ Return ONLY the JSON object with "summary" and "tags" fields."""
         raw = re.sub(r"\s*```$", "", raw).strip()
 
     try:
-        parsed = json.loads(_extract_json(raw))
+        parsed = json.loads(_sanitize_json_control_chars(_extract_json(raw)))
     except json.JSONDecodeError as e:
         _logger.error("AI response could not be parsed: %s", e, exc_info=True)
         raise HTTPException(status_code=502, detail="The AI service returned an unexpected response. Please try again.")

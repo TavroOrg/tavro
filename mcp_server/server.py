@@ -2,6 +2,8 @@ import os
 import json
 import time
 import hashlib
+import asyncio
+import uuid
 from pathlib import Path
 import uvicorn
 import httpx
@@ -1741,6 +1743,67 @@ async def delete_company(original_prompt: str, *, company_id: str) -> Dict[str, 
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 
+# In-process tracking for background research jobs kicked off by research_blueprint.
+# Keyed by job_id. This is intentionally just an in-memory dict (no DB/table) — it
+# only needs to survive for the lifetime of this MCP server process, to bridge the
+# "start" tool call and the later "check status" tool call for the same job.
+# Entries carry a "created_at" so they can be pruned once stale (see
+# _prune_stale_research_jobs) instead of accumulating forever.
+_research_jobs: Dict[str, Dict[str, Any]] = {}
+_RESEARCH_JOB_TTL_SECONDS = 60 * 60  # 1 hour — plenty of time for a check-in, small enough to not leak
+
+# asyncio.create_task() only holds a *weak* reference to the task in the event loop;
+# without a strong reference elsewhere, a fire-and-forget task can be garbage
+# collected before it completes. Keep every in-flight background task here and
+# have it remove itself when done, so scheduled research always runs to completion.
+_background_tasks: set = set()
+
+
+def _prune_stale_research_jobs() -> None:
+    """Drop job entries older than the TTL so _research_jobs doesn't grow forever."""
+    cutoff = time.time() - _RESEARCH_JOB_TTL_SECONDS
+    for stale_id in [jid for jid, job in _research_jobs.items() if job.get("created_at", 0) < cutoff]:
+        _research_jobs.pop(stale_id, None)
+
+
+async def _run_research_background(job_id: str, payload: Dict[str, Any], headers: Dict[str, str]) -> None:
+    """
+    Runs in the background (fired via asyncio.create_task, not awaited by the tool
+    call) — consumes the same /research SSE endpoint the UI's Research button uses,
+    and stores the outcome in _research_jobs for get_blueprint_research_status to
+    pick up later.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream(
+                "POST",
+                f"{TAVRO_API_URL}/api/v1/blueprint/research",
+                json=payload,
+                headers=headers,
+            ) as resp:
+                resp.raise_for_status()
+                async for raw_line in resp.aiter_lines():
+                    line = raw_line.strip()
+                    if not line.startswith("data:"):
+                        continue
+                    event = json.loads(line[5:].strip())
+                    if event.get("type") == "status":
+                        _research_jobs[job_id]["message"] = event.get("message", "")
+                    elif event.get("type") == "result":
+                        _research_jobs[job_id].update(status="completed", result=event.get("data", {}))
+                        return
+                    elif event.get("type") == "error":
+                        _research_jobs[job_id].update(
+                            status="failed", error=event.get("message", "Research failed"),
+                        )
+                        return
+
+        _research_jobs[job_id].update(status="failed", error="Stream ended without a result event")
+
+    except Exception as e:
+        _research_jobs[job_id].update(status="failed", error=str(e))
+
+
 @core.tool(name="research_blueprint")
 async def research_blueprint(
     original_prompt: str,
@@ -1752,16 +1815,18 @@ async def research_blueprint(
     is_public: bool = False,
 ) -> Dict[str, Any]:
     """
-    Initiate AI-powered research to build a Company Blueprint.
+    Start AI-powered research to build a Company Blueprint. Returns immediately —
+    the research itself runs in the background and typically takes 1-2 minutes, so
+    this call does NOT block waiting for it.
 
-    For PUBLIC companies (is_public=True or ticker provided), this fetches SEC EDGAR 10-K
+    For PUBLIC companies (is_public=True or ticker provided), this fetches SEC EDGAR
     filings and performs web search to generate accurate blueprint dimensions.
     For PRIVATE companies (is_public=False), it uses AI knowledge of the industry.
 
-    The research produces a list of dimension nodes (profile, strategy, organisation,
-    finance, process, application, integration, risk) that populate the company blueprint.
-
-    After research, call save_blueprint_nodes to persist the returned nodes.
+    After calling this: tell the user research has started and will take a few
+    minutes, then call get_blueprint_research_status(job_id=...) on a later turn
+    (e.g. when the user checks in) to get the actual result. Once that reports
+    "completed", pass its nodes to save_blueprint_nodes.
 
     Args:
         original_prompt (str): REQUIRED verbatim user message.
@@ -1772,8 +1837,8 @@ async def research_blueprint(
         is_public (bool): True if the company is publicly traded.
 
     Returns:
-        Dict[str, Any]: Research result containing nodes (list of dimension nodes),
-                        sources, notice, turns_used, tokens_cap — or error details.
+        Dict[str, Any]: {"job_id": str, "status": "started", "message": str} — call
+                        get_blueprint_research_status(job_id) to retrieve the result.
     """
     try:
         token = get_access_token()
@@ -1804,30 +1869,65 @@ async def research_blueprint(
         if tenant_id:
             headers["x-tenant-id"] = str(tenant_id)
 
-        # The research endpoint streams SSE events. Consume the stream and return
-        # the final "result" event payload.
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            async with client.stream(
-                "POST",
-                f"{TAVRO_API_URL}/api/v1/blueprint/research",
-                json=payload,
-                headers=headers,
-            ) as resp:
-                resp.raise_for_status()
-                async for raw_line in resp.aiter_lines():
-                    line = raw_line.strip()
-                    if not line.startswith("data:"):
-                        continue
-                    event = json.loads(line[5:].strip())
-                    if event.get("type") == "result":
-                        return event.get("data", {})
-                    if event.get("type") == "error":
-                        return {
-                            "error": "RESEARCH_ERROR",
-                            "details": event.get("message", "Research failed"),
-                        }
+        _prune_stale_research_jobs()
 
-        return {"error": "RESEARCH_ERROR", "details": "Stream ended without a result event"}
+        job_id = uuid.uuid4().hex
+        _research_jobs[job_id] = {
+            "status": "running",
+            "company_id": company_id,
+            "message": "Research started…",
+            "created_at": time.time(),
+        }
+        task = asyncio.create_task(_run_research_background(job_id, payload, headers))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
+        return {
+            "job_id": job_id,
+            "status": "started",
+            "message": (
+                f"Research started for {company_name}. This typically takes 1-2 minutes. "
+                f"Call get_blueprint_research_status(job_id=\"{job_id}\") to check on it."
+            ),
+        }
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="get_blueprint_research_status")
+async def get_blueprint_research_status(original_prompt: str, *, job_id: str) -> Dict[str, Any]:
+    """
+    Check the status of a background research job started by research_blueprint.
+
+    Call this on a later turn (e.g. the user checks in, or a natural follow-up) —
+    not repeatedly in a tight loop. Once status is "completed", `result` has the
+    same {nodes, sources, notice, turns_used, tokens_cap} shape research_blueprint
+    used to return directly — pass result["nodes"] to save_blueprint_nodes.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        job_id (str): Job ID returned by research_blueprint.
+
+    Returns:
+        Dict[str, Any]: {"status": "running"|"completed"|"failed", "message"?,
+                        "result"?, "error"?} — or {"error": "NOT_FOUND", ...} if
+                        the job_id is unknown (e.g. server restarted).
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("get_blueprint_research_status", original_prompt, {"job_id": job_id}, tenant_id)
+
+        job = _research_jobs.get(job_id)
+        if job is None:
+            return {
+                "error": "NOT_FOUND",
+                "details": f"No research job found for job_id={job_id!r} (it may have expired or the server restarted).",
+            }
+        return job
 
     except ValueError as ve:
         return {"error": "VALIDATION_ERROR", "details": str(ve)}
