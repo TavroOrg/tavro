@@ -39,7 +39,7 @@ const getAvailabilityMeta = (status: string | null | undefined) => {
 const IntegrationsPage: React.FC = () => {
   const navigate = useNavigate();
   const { loading: catalogLoading, error: catalogError, lastFetched } = useCatalog();
-  const { activeCompany } = useBlueprint();
+  const { activeCompany, companiesLoaded } = useBlueprint();
   const [integrations, setIntegrations] = useState<IntegrationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +49,8 @@ const IntegrationsPage: React.FC = () => {
   const [showUploadModal, setShowUploadModal] = useState(false);
 
   useEffect(() => {
+    if (!companiesLoaded) return;
+
     if (catalogLoading) {
       setLoading(true);
       return;
@@ -78,7 +80,7 @@ const IntegrationsPage: React.FC = () => {
       }
     };
     load();
-  }, [catalogLoading, catalogError, lastFetched, activeCompany?.id]);
+  }, [catalogLoading, catalogError, lastFetched, activeCompany?.id, companiesLoaded]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

@@ -60,7 +60,7 @@ const Dashboard: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [showLoadModal, setShowLoadModal] = useState(false);
     const { refresh } = useCatalog();
-    const { activeCompany } = useBlueprint();
+    const { activeCompany, companiesLoaded } = useBlueprint();
     const [allAgents, setAllAgents] = useState<AgentData[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -164,8 +164,9 @@ const Dashboard: React.FC = () => {
     }, [activeCompany?.id]);
 
     useEffect(() => {
+        if (!companiesLoaded) return;
         loadAgents();
-    }, [loadAgents]);
+    }, [loadAgents, companiesLoaded]);
 
     // Keep the pending-agent ref in sync so the workflow listener below can cheaply
     // decide whether a re-fetch is needed without reading state inside the handler.

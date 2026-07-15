@@ -32,6 +32,13 @@ def _tenant(request: Request) -> str | None:
     return val.strip() or None
 
 
+def _require_tenant(request: Request) -> str:
+    tenant_id = _tenant(request)
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant context.")
+    return tenant_id
+
+
 ANTHROPIC_API_URL       = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODEL         = "claude-sonnet-4-6"
 SPARK_MAX_TOKENS        = 2000
@@ -1169,12 +1176,10 @@ async def get_spark_ideas(
     db: AsyncSession = Depends(get_db),
 ) -> list[SparkIdea]:
     """Return stored ideas for a company. Optionally filter by search term."""
-    tenant_id = (tenant_id or "").strip() or _tenant(request)
-    params: dict[str, Any] = {"company_id": company_id}
+    tenant_id = (tenant_id or "").strip() or _require_tenant(request)
+    params: dict[str, Any] = {"company_id": company_id, "tenant_id": tenant_id}
     where = "(company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
-    if tenant_id:
-        where += " AND tenant_id = :tenant_id"
-        params["tenant_id"] = tenant_id
+    where += " AND tenant_id = :tenant_id"
     if search and search.strip():
         where += " AND (title ILIKE :search OR description ILIKE :search OR rationale ILIKE :search)"
         params["search"] = f"%{search.strip()}%"

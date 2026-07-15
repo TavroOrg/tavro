@@ -21,7 +21,7 @@ const PAGE_SIZE = 10;
 
 const AiModelsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { activeCompany } = useBlueprint();
+  const { activeCompany, companiesLoaded } = useBlueprint();
   const [models, setModels] = useState<AiModelRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +30,7 @@ const AiModelsPage: React.FC = () => {
   const [page, setPage] = useState(1);
 
   useEffect(() => {
+    if (!companiesLoaded) return;
     const load = async () => {
       setLoading(true);
       setError(null);
@@ -43,7 +44,7 @@ const AiModelsPage: React.FC = () => {
       }
     };
     load();
-  }, [activeCompany?.id]);
+  }, [activeCompany?.id, companiesLoaded]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

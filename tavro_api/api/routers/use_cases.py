@@ -55,6 +55,13 @@ def _tenant(request: Request) -> Optional[str]:
     return val.strip() or None
 
 
+def _require_tenant(request: Request) -> str:
+    tenant_id = _tenant(request)
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant context.")
+    return tenant_id
+
+
 def _norm_id(value: str) -> str:
     return (value or "").strip()
 
@@ -373,7 +380,7 @@ async def list_use_cases(
     except Exception:
         start, end = start_record, start_record + 9
 
-    tenant_id = (tenant_id or "").strip() or _tenant(request)
+    tenant_id = (tenant_id or "").strip() or _require_tenant(request)
     where_clauses: List[str] = []
     params: Dict[str, Any] = {}
 
@@ -637,7 +644,7 @@ async def create_use_case(
 
 @router.get("/{use_case_id}", summary="Get AI Use Case")
 async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = Depends(get_db), company_id: Optional[str] = Query(default=None)):
-    tenant_id = _tenant(request)
+    tenant_id = _require_tenant(request)
     normalized_use_case_id = _norm_id(use_case_id)
     use_case_tenant_filter = (
         "AND u.tenant_id = :tid"

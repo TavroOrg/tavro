@@ -22,6 +22,8 @@ interface BlueprintState {
   graph: GraphData | null;
   loading: boolean;
   graphLoading: boolean;
+  /** True once the initial companies list has resolved (success or failure) — distinguishes "still loading" from "no active company". */
+  companiesLoaded: boolean;
   error: string | null;
   lastFetched: Date | null;
   /** Switch the active company and reload nodes + graph. */
@@ -42,7 +44,7 @@ interface BlueprintState {
 
 const BlueprintContext = createContext<BlueprintState>({
   companies: [], activeCompany: null, dimTypes: [], nodes: [], graph: null,
-  loading: false, graphLoading: false, error: null, lastFetched: null,
+  loading: false, graphLoading: false, companiesLoaded: false, error: null, lastFetched: null,
   selectCompany: () => {}, removeCompany: () => {}, refresh: () => {}, refreshGraph: () => {}, refreshNodes: () => {}, refreshCompanies: () => {},
 });
 
@@ -61,6 +63,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [graphLoading,  setGraphLoading]  = useState(false);
   const [error,         setError]         = useState<string | null>(null);
   const [lastFetched,   setLastFetched]   = useState<Date | null>(null);
+  const [companiesLoaded, setCompaniesLoaded] = useState(false);
 
   const fetchingRef = useRef(false);
 
@@ -92,6 +95,8 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         if (saved) setActiveCompany(saved);
       } catch (err: any) {
         setError(toUserMessage(err));
+      } finally {
+        setCompaniesLoaded(true);
       }
     })();
   }, []);
@@ -183,7 +188,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   return (
     <BlueprintContext.Provider value={{
       companies, activeCompany, dimTypes, nodes, graph,
-      loading, graphLoading, error, lastFetched,
+      loading, graphLoading, companiesLoaded, error, lastFetched,
       selectCompany, removeCompany, refresh, refreshGraph, refreshNodes, refreshCompanies: fetchCompanies,
     }}>
       {children}
