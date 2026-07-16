@@ -243,20 +243,42 @@ class SparkApi {
     portalActivity.record('Reset Spark ideas', 'amber');
   }
 
-  /** Expand a Spark idea into full AI use case fields + agent recommendation via Claude. */
-  async convertIdea(payload: SparkConvertRequest): Promise<{ use_case_fields: UseCaseFields; agent_recommendation: Record<string, unknown> | null }> {
+  /** Expand a Spark idea into full AI use case fields + agent recommendations via Claude. */
+  async convertIdea(payload: SparkConvertRequest): Promise<{
+    use_case_fields: UseCaseFields;
+    agent_recommendations: Record<string, unknown>[];
+    agent_recommendation_error: string | null;
+    agent_recommendation_fatal: boolean;
+  }> {
     appLogger.req('Spark convertIdea → request', { ideaId: payload.idea_id, title: payload.title });
     const t0 = Date.now();
     try {
-      const resp = await req<{ use_case_fields: UseCaseFields; agent_recommendation: Record<string, unknown> | null }>('/spark/convert', {
+      const resp = await req<{
+        use_case_fields: UseCaseFields;
+        agent_recommendations: Record<string, unknown>[];
+        agent_recommendation_error: string | null;
+        agent_recommendation_fatal?: boolean;
+      }>('/spark/convert', {
         method: 'POST',
         body: JSON.stringify(payload),
       });
+      const agentCount = resp.agent_recommendations?.length ?? 0;
       appLogger.res('Spark convertIdea ← response', {
         title: resp.use_case_fields.title,
-        hasAgent: !!resp.agent_recommendation,
+        agentCount,
+        agentError: resp.agent_recommendation_error ?? null,
+        agentErrorFatal: resp.agent_recommendation_fatal ?? false,
       }, Date.now() - t0);
-      return resp;
+      if (agentCount === 0) {
+        const message = `Spark convertIdea produced 0 agent recommendations for "${payload.title}": ${resp.agent_recommendation_error ?? 'Unknown reason'}`;
+        const detail = { ideaId: payload.idea_id, title: payload.title, reason: resp.agent_recommendation_error };
+        if (resp.agent_recommendation_fatal) {
+          appLogger.error(message, detail);
+        } else {
+          appLogger.warn(message, detail);
+        }
+      }
+      return { ...resp, agent_recommendation_fatal: resp.agent_recommendation_fatal ?? false };
     } catch (err) {
       appLogger.error('Spark convertIdea failed', { error: (err as Error).message });
       throw err;

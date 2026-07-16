@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Bot,
@@ -7,9 +7,19 @@ import {
     CheckCircle2,
     ClipboardList,
     LayoutGrid,
-    List
+    List,
+    Loader2
 } from 'lucide-react';
 import { readRoadmapConfig, ROADMAP_CONFIG_UPDATED_EVENT } from '../services/roadmapConfig';
+
+const ENRICHING_KEY = 'tavro_enriching_use_cases';
+
+function readEnrichingIds(): Set<string> {
+    try {
+        const raw = localStorage.getItem(ENRICHING_KEY);
+        return new Set(raw ? JSON.parse(raw) : []);
+    } catch { return new Set(); }
+}
 
 interface UseCaseCatalogProps {
     useCases: any[];
@@ -28,6 +38,46 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
 }) => {
     const navigate = useNavigate();
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+
+    // Use cases still being enriched (fields + agent team) show a "Running" pill on their
+    // card, mirroring the Agent Catalog's "Running Risk Assessment" pill — so it's visible
+    // right from the list, not just after opening the use case's own detail page.
+    const [enrichingIds, setEnrichingIds] = useState<Set<string>>(() => readEnrichingIds());
+    useEffect(() => {
+        const sync = () => setEnrichingIds(readEnrichingIds());
+        const onStarted = (e: Event) => {
+            const detail = (e as CustomEvent<{ use_case_id?: string }>).detail;
+            if (!detail?.use_case_id) return;
+            setEnrichingIds(prev => {
+                if (prev.has(detail.use_case_id!)) return prev;
+                const next = new Set(prev);
+                next.add(detail.use_case_id!);
+                return next;
+            });
+        };
+        const onEnriched = (e: Event) => {
+            const detail = (e as CustomEvent<{ use_case_id?: string }>).detail;
+            if (!detail?.use_case_id) return;
+            setEnrichingIds(prev => {
+                if (!prev.has(detail.use_case_id!)) return prev;
+                const next = new Set(prev);
+                next.delete(detail.use_case_id!);
+                return next;
+            });
+        };
+        window.addEventListener('storage', sync);
+        window.addEventListener('tavro_usecase_enriching_started', onStarted);
+        window.addEventListener('tavro_usecase_enriched', onEnriched);
+        return () => {
+            window.removeEventListener('storage', sync);
+            window.removeEventListener('tavro_usecase_enriching_started', onStarted);
+            window.removeEventListener('tavro_usecase_enriched', onEnriched);
+        };
+    }, []);
+    const isEnriching = (uc: any): boolean => {
+        const id = String(uc.identifier ?? uc.id ?? '');
+        return id.length > 0 && enrichingIds.has(id);
+    };
 
     const parseCount = (value: unknown): number | null => {
         if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.trunc(value));
@@ -349,6 +399,15 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                             <span className="text-[9px] text-slate-400 italic">No scores yet</span>
                                         )}
                                     </div>
+
+                                    {isEnriching(uc) && (
+                                        <div className="mt-2">
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-100 dark:border-amber-800">
+                                                <Loader2 size={10} className="animate-spin" />
+                                                Enriching AI Use Case
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
@@ -404,6 +463,12 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                             <Bot size={10} />
                                             {relatedAgentCount} Agent{relatedAgentCount === 1 ? '' : 's'}
                                         </span>
+                                        {isEnriching(uc) && (
+                                            <span className="mt-1 inline-flex items-center gap-1 w-fit text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-100 dark:border-amber-800">
+                                                <Loader2 size={10} className="animate-spin" />
+                                                Enriching AI Use Case
+                                            </span>
+                                        )}
                                     </div>
                                     <div className="text-sm text-slate-500 dark:text-slate-400 truncate pr-4">
                                         {uc.function || '—'}

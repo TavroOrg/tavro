@@ -1456,8 +1456,8 @@ async def convert_spark_idea(
 
     This tool only drafts the structured fields; it does NOT create or save anything by
     itself. After calling it, call create_ai_use_case with the returned use_case_fields, and —
-    if the user also wants an agent — call create_agent with the returned
-    agent_recommendation, in the same turn, to actually persist them.
+    if the user also wants agents — call create_agent once per entry in the returned
+    agent_recommendations list, in the same turn, to actually persist them.
 
     Args:
     original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
@@ -1471,7 +1471,7 @@ async def convert_spark_idea(
     estimated_impact (str, optional): 'Low', 'Medium', or 'High', if previously shown.
 
     Returns:
-    Dict[str, Any]: { "use_case_fields": {...}, "agent_recommendation": {...} }.
+    Dict[str, Any]: { "use_case_fields": {...}, "agent_recommendations": [{...}, ...] }.
     """
     print("Convert spark idea requested")
     try:

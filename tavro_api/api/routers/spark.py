@@ -118,7 +118,9 @@ class SparkConvertRequest(BaseModel):
 
 class SparkConvertResponse(BaseModel):
     use_case_fields: dict
-    agent_recommendation: dict | None = None
+    agent_recommendations: list[dict] = []
+    agent_recommendation_error: str | None = None
+    agent_recommendation_fatal: bool = False
 
 
 class SparkContextResponse(BaseModel):
@@ -613,116 +615,21 @@ def _sanitize_columns(raw_columns: Any, tables: list[dict[str, Any]]) -> list[di
     return columns[:24]
 
 
-def _fallback_lineage(request: SparkConvertRequest, fields: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-    use_case_title = _to_text(fields.get("title"), request.title)
-    context_label = _to_text(request.signal_label, use_case_title)
-    base_name = re.sub(r"[^A-Za-z0-9]+", " ", context_label).strip() or use_case_title
-    words = re.findall(r"[A-Za-z0-9]+", base_name)[:4] or ["Operational"]
-    table_name = " ".join(words + ["Signals"])
-    columns = [
-        "record_id",
-        "event_timestamp",
-        "source_system",
-        "status",
-        "priority_score",
-        "recommended_action",
-    ]
-    tables = [{
-        "name": table_name,
-        "description": f"Source records and signals used by the {use_case_title} agent.",
-        "columns": columns,
-    }]
-    return tables, [{"name": name, "table_name": table_name} for name in columns]
-
-
-def _fallback_agent_recommendation(request: SparkConvertRequest, fields: dict[str, Any]) -> dict[str, Any]:
-    use_case_title = _to_text(fields.get("title"), request.title)
-    use_case_desc = _to_text(fields.get("description"), request.description)
-    dimensions = [d for d in request.target_dimensions if _to_text(d)]
-    dim_text = ", ".join(dimensions) if dimensions else "process"
-    context_label = _to_text(request.signal_label, dim_text)
-    tables, columns = _fallback_lineage(request, fields)
-
-    return {
-        "agent_name": _to_agent_name(use_case_title),
-        "description": (
-            f"Executes the '{use_case_title}' use case by analyzing {context_label.lower()} signals, "
-            "surfacing prioritized actions, and tracking outcomes."
-        ),
-        "instruction": (
-            f"Monitor operational data relevant to {use_case_title} and identify high-priority events. "
-            "Correlate findings with business context and produce actionable recommendations with rationale. "
-            "Trigger alerts when confidence thresholds are met and persist decision traces for governance review. "
-            "Escalate uncertain or high-impact cases to human owners and incorporate feedback in future runs."
-        ),
-        "tools": [
-            {
-                "name": "Use Case Catalog API",
-                "description": "Read and update AI use case metadata, status, and relationship context.",
-            },
-            {
-                "name": "Operational Data API",
-                "description": f"Fetch source records and event signals for {dim_text} workflows.",
-            },
-            {
-                "name": "Notification Service",
-                "description": "Send prioritized alerts and workflow tasks to relevant stakeholders.",
-            },
-        ],
-        "knowledge_source": {
-            "name": "Company Blueprint Context",
-            "description": f"Spark context for {use_case_title}: {use_case_desc or request.rationale}",
-        },
-        "tables": tables,
-        "columns": columns,
-        "skills": [
-            {
-                "name": "Signal Monitoring",
-                "description": f"Continuously monitors {context_label.lower()} signals and triggers on threshold breaches.",
-                "tags": ["monitoring", "alerting", dim_text],
-                "input_modes": ["structured_data", "database_query"],
-                "output_modes": ["alert", "structured_data"],
-            },
-            {
-                "name": "Recommendation Generation",
-                "description": f"Produces prioritized, rationale-backed action recommendations for {use_case_title}.",
-                "tags": ["recommendation", "reasoning", dim_text],
-                "input_modes": ["structured_data"],
-                "output_modes": ["report", "structured_data"],
-            },
-            {
-                "name": "Outcome Tracking",
-                "description": "Persists decision traces and incorporates human feedback for governance and model improvement.",
-                "tags": ["governance", "feedback", "audit"],
-                "input_modes": ["text", "structured_data"],
-                "output_modes": ["structured_data"],
-            },
-        ],
-    }
-
-
-def _normalize_agent_recommendation(
-    candidate: Any,
-    request: SparkConvertRequest,
-    fields: dict[str, Any],
-) -> dict[str, Any]:
-    fallback = _fallback_agent_recommendation(request, fields)
+def _normalize_agent_recommendation(candidate: Any, request: SparkConvertRequest) -> dict[str, Any] | None:
+    """Sanitize one Claude-proposed agent spec. Returns None if the candidate is unusable —
+    callers should drop it rather than fabricate a synthetic replacement."""
     if not isinstance(candidate, dict):
-        return fallback
+        return None
 
-    result = dict(fallback)
+    name = _to_text(candidate.get("agent_name")) or request.title
+    description = _to_text(candidate.get("description")) or f"Implements the '{request.title}' use case."
+    instruction = _to_text(candidate.get("instruction")) or description
 
-    name = _to_text(candidate.get("agent_name"))
-    if name:
-        result["agent_name"] = _to_agent_name(name)
-
-    description = _to_text(candidate.get("description"))
-    if description:
-        result["description"] = description
-
-    instruction = _to_text(candidate.get("instruction"))
-    if instruction:
-        result["instruction"] = instruction
+    result: dict[str, Any] = {
+        "agent_name": _to_agent_name(name),
+        "description": description,
+        "instruction": instruction,
+    }
 
     tools = _sanitize_tools(candidate.get("tools"))
     if tools:
@@ -736,7 +643,7 @@ def _normalize_agent_recommendation(
     if tables:
         result["tables"] = tables
 
-    columns = _sanitize_columns(candidate.get("columns") or candidate.get("column"), result.get("tables") or [])
+    columns = _sanitize_columns(candidate.get("columns") or candidate.get("column"), tables)
     if columns:
         result["columns"] = columns
 
@@ -744,7 +651,24 @@ def _normalize_agent_recommendation(
     if skills:
         result["skills"] = skills
 
+    upstream_raw = _to_text(candidate.get("upstream_agent_name"))
+    if upstream_raw:
+        result["upstream_agent_name"] = _to_agent_name(upstream_raw)
+
     return result
+
+
+def _normalize_agent_recommendations(candidates: Any, request: SparkConvertRequest) -> list[dict[str, Any]]:
+    if not isinstance(candidates, list):
+        return []
+    normalized = [n for n in (_normalize_agent_recommendation(c, request) for c in candidates[:5]) if n is not None]
+    valid_names = {n["agent_name"] for n in normalized}
+    for n in normalized:
+        upstream = n.get("upstream_agent_name")
+        if not upstream or upstream == n["agent_name"] or upstream not in valid_names:
+            n.pop("upstream_agent_name", None)
+
+    return normalized
 
 
 async def _fetch_dim_node_candidates(
@@ -1684,9 +1608,13 @@ async def convert_idea(
     }
 
     if not api_key:
+        error_msg = "Agent generation is disabled: no ANTHROPIC_API_KEY configured on the server."
+        logger.error("spark.convert_idea: %s (idea_id=%s)", error_msg, request.idea_id)
         return SparkConvertResponse(
             use_case_fields=fallback_fields,
-            agent_recommendation=_fallback_agent_recommendation(request, fallback_fields),
+            agent_recommendations=[],
+            agent_recommendation_error=error_msg,
+            agent_recommendation_fatal=True,
         )
 
     blueprint_block = ""
@@ -1847,24 +1775,40 @@ async def convert_idea(
     except Exception as exc:
         logger.warning("spark.convert_idea enrichment failed — using fallback fields: %s", exc)
 
-    # Second Claude call: design the agent that implements this use case
-    agent_rec: dict[str, Any] | None = None
+    # Second Claude call: decompose the use case into the small team of agents that implements it
+    agent_recs: list[dict[str, Any]] = []
+    agent_error: str | None = None
+    agent_error_fatal = False
     if api_key:
         agent_system = (
-            "You are an AI solutions architect. Design a specific AI agent that implements the given use case. "
-            "Be concrete about what tools (APIs, systems, integrations) the agent needs and what data it reads."
+            "You are an AI solutions architect. Decompose the given use case into a team of AI agents that "
+            "together implement it end-to-end, one agent per genuinely distinct, non-overlapping responsibility "
+            "(e.g. data ingestion, cleaning/enrichment, analysis, risk/anomaly detection, decisioning, "
+            "orchestration, reporting/notification — only the stages this specific use case actually needs). "
+            "The right team size varies case by case: a narrow, single-flow use case needs only 2 agents; a "
+            "use case spanning many systems, data domains, or decision stages needs 4 or 5. Do not gravitate "
+            "toward a fixed number — size the team strictly from the responsibilities the use case demands. "
+            "Be concrete about what tools (APIs, systems, integrations) each agent needs and what data it reads."
         )
         agent_user = (
-            f"Design an AI agent that implements this use case:\n"
+            f"Design the AI agents that implement this use case:\n"
             f"Title: {request.title}\n"
             f"Description: {safe_fields.get('description', request.description)}\n"
             f"Solution approach: {safe_fields.get('solution_approach', '')}\n"
             f"Dimensions: {', '.join(request.target_dimensions)}\n"
             f"{blueprint_block}"
             f"{datahub_context_block}"
-            "Return a JSON object with exactly these fields:\n"
-            "- agent_name: concise agent name, max 6 words\n"
-            "- description: 1–2 sentences on what the agent does\n"
+            "First, silently enumerate the distinct functional responsibilities this use case genuinely requires "
+            "(do not include this enumeration in your output). Then return a JSON array with exactly one agent "
+            "object per responsibility, clamped to between 2 and 5 agents total:\n"
+            "- Exactly 2 responsibilities → 2 agents (e.g. a data/extraction stage and an analysis/action stage).\n"
+            "- 3 responsibilities → 3 agents. 4 → 4 agents. 5 or more → 5 agents, merging the least distinct ones.\n"
+            "Do not default to 3 agents out of habit — base the count strictly on the use case's actual scope, "
+            "and vary it: simple single-flow use cases should come back as 2, broad multi-system use cases should "
+            "come back as 4 or 5.\n"
+            "Each object in the array must have exactly these fields:\n"
+            "- agent_name: concise agent name, max 6 words, distinct from the other agents in the array\n"
+            "- description: 1–2 sentences on what this agent does\n"
             "- instruction: 3–5 sentences of operational instructions — how it ingests data, what it produces, and when it acts\n"
             "- tools: list of up to 4 objects {\"name\": \"...\", \"description\": \"...\"} — the external systems/APIs this agent calls (use real system names if mentioned in the use case, otherwise use descriptive generic names)\n"
             "- knowledge_source: one object {\"name\": \"...\", \"description\": \"...\"} — the primary data source the agent reads from\n"
@@ -1874,26 +1818,89 @@ async def convert_idea(
             "    {\"name\": \"...\", \"description\": \"...\", \"tags\": [\"...\"], "
             "\"input_modes\": [\"...\"], \"output_modes\": [\"...\"]}\n"
             "  input_modes and output_modes must each be one or more of: "
-            "text, structured_data, api_response, database_query, file, alert, report, event, stream\n\n"
-            "Return ONLY the JSON object. No prose."
+            "text, structured_data, api_response, database_query, file, alert, report, event, stream\n"
+            "- upstream_agent_name: the exact agent_name (from this same array) of the single other agent whose "
+            "output this agent primarily consumes as input, reflecting the pipeline's real data flow. Omit this "
+            "field (or use null) for the first-stage agent that starts the pipeline (e.g. the initial ingestion "
+            "agent) — every other agent must set it to exactly one upstream agent_name from the array.\n\n"
+            "Return ONLY the JSON array. No prose."
         )
         try:
-            agent_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=1600)
+            agent_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=3200)
             agent_raw = "".join(block.get("text", "") for block in agent_data.get("content", []) if block.get("type") == "text")
-            extracted_agent = _extract_json_object(agent_raw)
+            extracted_agent = _extract_json(agent_raw)
 
-            if agent_data.get("stop_reason") == "max_tokens" and _extract_balanced_json(extracted_agent, "{", "}") is None:
-                logger.warning("spark.convert_idea agent recommendation truncated at max_tokens=1600; retrying with larger budget")
-                retry_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=2800)
+            # Retry with a larger budget if the response was truncated mid-JSON OR came back
+            # with no text content at all (e.g. thinking tokens consumed the whole budget).
+            needs_retry = not agent_raw.strip() or (
+                agent_data.get("stop_reason") == "max_tokens" and _extract_balanced_json(extracted_agent, "[", "]") is None
+            )
+            if needs_retry:
+                logger.warning(
+                    "spark.convert_idea agent recommendations empty or truncated on first attempt "
+                    "for idea_id=%s (stop_reason=%s, block_types=%s); retrying with larger budget",
+                    request.idea_id,
+                    agent_data.get("stop_reason"),
+                    [b.get("type") for b in agent_data.get("content", [])],
+                )
+                retry_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=5200)
                 agent_raw = "".join(block.get("text", "") for block in retry_data.get("content", []) if block.get("type") == "text")
-                extracted_agent = _extract_json_object(agent_raw)
+                extracted_agent = _extract_json(agent_raw)
+                agent_data = retry_data
 
-            candidate = json.loads(extracted_agent)
-            agent_rec = _normalize_agent_recommendation(candidate, request, safe_fields)
+            if not agent_raw.strip():
+                agent_error = "Claude returned an empty response while designing agents for this use case."
+                logger.error(
+                    "spark.convert_idea: %s idea_id=%s (stop_reason=%s, block_types=%s)",
+                    agent_error,
+                    request.idea_id,
+                    agent_data.get("stop_reason"),
+                    [b.get("type") for b in agent_data.get("content", [])],
+                )
+            else:
+                try:
+                    candidates = json.loads(extracted_agent)
+                except json.JSONDecodeError:
+                    # Malformed JSON on the first attempt is usually a one-off formatting slip
+                    # (stray prose, an unescaped character) rather than a persistent failure —
+                    # one retry with a fresh generation clears it in the common case.
+                    logger.warning(
+                        "spark.convert_idea agent JSON malformed on first attempt for idea_id=%s; retrying once",
+                        request.idea_id,
+                    )
+                    retry_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=5200)
+                    agent_raw = "".join(block.get("text", "") for block in retry_data.get("content", []) if block.get("type") == "text")
+                    extracted_agent = _extract_json(agent_raw)
+                    candidates = json.loads(extracted_agent)
+                agent_recs = _normalize_agent_recommendations(candidates, request)
+                if not agent_recs:
+                    agent_error = "Claude's response did not contain any usable agent definitions for this use case."
+                    logger.error(
+                        "spark.convert_idea: %s idea_id=%s title=%r; raw=%s",
+                        agent_error, request.idea_id, request.title, agent_raw[:500],
+                    )
+        except httpx.TimeoutException as exc:
+            agent_error = "The agent design request to Claude timed out."
+            agent_error_fatal = True
+            logger.error("spark.convert_idea: %s idea_id=%s: %s", agent_error, request.idea_id, exc, exc_info=True)
+        except httpx.HTTPError as exc:
+            agent_error = "The agent design request to Claude failed (API error)."
+            agent_error_fatal = True
+            logger.error("spark.convert_idea: %s idea_id=%s: %s", agent_error, request.idea_id, exc, exc_info=True)
+        except json.JSONDecodeError as exc:
+            # Reaches here only if the post-retry parse (above) also failed — a persistent,
+            # not one-off, malformed-response problem.
+            agent_error = "Claude's agent design response could not be parsed as JSON."
+            agent_error_fatal = True
+            logger.error("spark.convert_idea: %s idea_id=%s: %s", agent_error, request.idea_id, exc, exc_info=True)
         except Exception as exc:
-            logger.warning("spark.convert_idea agent recommendation fallback: %s", exc)
+            agent_error = "Agent design generation failed unexpectedly."
+            agent_error_fatal = True
+            logger.error("spark.convert_idea: %s idea_id=%s: %s", agent_error, request.idea_id, exc, exc_info=True)
 
-    if agent_rec is None:
-        agent_rec = _fallback_agent_recommendation(request, safe_fields)
-
-    return SparkConvertResponse(use_case_fields=safe_fields, agent_recommendation=agent_rec)
+    return SparkConvertResponse(
+        use_case_fields=safe_fields,
+        agent_recommendations=agent_recs,
+        agent_recommendation_error=agent_error,
+        agent_recommendation_fatal=agent_error_fatal,
+    )
