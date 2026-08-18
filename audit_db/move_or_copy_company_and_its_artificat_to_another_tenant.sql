@@ -3,16 +3,17 @@ DECLARE
     -- ============================================================
     -- SET YOUR VALUES HERE
     -- ============================================================
-    v_source_company_id TEXT := 'SOURCE_COMPANY_ID';  -- the company_id to move or copy
-    v_source_tenant     TEXT := 'SOURCE_TENANT_ID';   -- the tenant_id where the company currently resides
-    v_target_tenant     TEXT := 'TARGET_TENANT_ID';   -- the tenant_id where the company will be moved or copied to
-    v_mode              TEXT := 'MOVE';              -- 'MOVE' or 'COPY'
+    v_source_company_id TEXT := 'SOURCE_COMPANY_ID';
+    v_source_tenant     TEXT := 'SOURCE_TENANT_ID';
+    v_target_tenant     TEXT := 'TARGET_TENANT_ID';
+    v_mode              TEXT := 'COPY';              -- 'MOVE' or 'COPY'
     -- ============================================================
 
-    v_twin_company_id   UUID;  -- derived from v_source_company_id
+    v_twin_company_id   UUID;   -- derived from v_source_company_id (source)
+    v_new_company_id    UUID;   -- new UUID for target company (COPY only)
+    v_new_company_uuid  UUID;   -- returned from twin.company INSERT
 
     v_tables TEXT[][] := ARRAY[
-        -- core — master entities
         ARRAY['core', 'agents'],
         ARRAY['core', 'ai_use_cases'],
         ARRAY['core', 'ai_models'],
@@ -28,7 +29,6 @@ DECLARE
         ARRAY['core', 'tools'],
         ARRAY['core', 'tool_tables'],
         ARRAY['core', 'playground_session'],
-        -- core — agent detail
         ARRAY['core', 'agent_configurations'],
         ARRAY['core', 'agent_controls'],
         ARRAY['core', 'agent_ai_models'],
@@ -54,15 +54,12 @@ DECLARE
         ARRAY['core', 'agent_skills'],
         ARRAY['core', 'agent_tables'],
         ARRAY['core', 'agent_tools'],
-        -- core — junction
         ARRAY['core', 'ai_model_ai_use_cases'],
         ARRAY['core', 'ai_model_business_applications'],
         ARRAY['core', 'ai_model_business_processes'],
         ARRAY['core', 'ai_use_case_business_applications'],
         ARRAY['core', 'ai_use_case_business_processes'],
-        -- curated
         ARRAY['curated', 'agent_360'],
-        -- risk_management
         ARRAY['risk_management', 'agent_risk_assessment'],
         ARRAY['risk_management', 'agent_risk_scenarios']
     ];
@@ -77,19 +74,15 @@ DECLARE
     v_cols_select     TEXT;
     v_cols_insert     TEXT;
     v_has_company_id  BOOLEAN;
-    v_new_company_uuid UUID;
+    v_update_ts_col   TEXT;
     v_node_map        JSONB := '{}';
     v_node_rec        RECORD;
     v_new_id          UUID;
 
 BEGIN
 
-    -- Derive twin UUID from core company_id
     v_twin_company_id := v_source_company_id::UUID;
 
-    -- ============================================================
-    -- Validate inputs
-    -- ============================================================
     IF v_mode NOT IN ('MOVE', 'COPY') THEN
         RAISE EXCEPTION 'v_mode must be MOVE or COPY. Got: %', v_mode;
     END IF;
@@ -97,12 +90,20 @@ BEGIN
         RAISE EXCEPTION 'v_source_company_id cannot be blank.';
     END IF;
 
+    -- Generate new company UUID upfront for COPY mode
+    IF v_mode = 'COPY' THEN
+        v_new_company_id := gen_random_uuid();
+    END IF;
+
     RAISE NOTICE '';
     RAISE NOTICE '========================================================';
-    RAISE NOTICE 'MODE            : %', v_mode;
-    RAISE NOTICE 'Company ID      : %', v_source_company_id;
-    RAISE NOTICE 'Source tenant   : %', v_source_tenant;
-    RAISE NOTICE 'Target tenant   : %', v_target_tenant;
+    RAISE NOTICE 'MODE              : %', v_mode;
+    RAISE NOTICE 'Source company    : %', v_source_company_id;
+    RAISE NOTICE 'Source tenant     : %', v_source_tenant;
+    RAISE NOTICE 'Target tenant     : %', v_target_tenant;
+    IF v_mode = 'COPY' THEN
+        RAISE NOTICE 'New company UUID  : %', v_new_company_id;
+    END IF;
     RAISE NOTICE '========================================================';
 
     -- ============================================================
@@ -348,23 +349,10 @@ BEGIN
             RAISE NOTICE '  [CONFLICT] core.agent_issues                             — % collision(s)', v_count;
         ELSE RAISE NOTICE '  [OK] core.agent_issues'; END IF;
 
-    ELSE -- COPY
-
+    ELSE -- COPY: new company_id so no conflicts possible in core
         RAISE NOTICE '';
-        RAISE NOTICE '  [ Checking if company already exists in target tenant ]';
-
-        SELECT COUNT(*) INTO v_count FROM (
-            (SELECT 1 FROM core.agents                WHERE company_id = v_source_company_id AND tenant_id = v_target_tenant LIMIT 1)
-            UNION ALL
-            (SELECT 1 FROM core.business_applications WHERE company_id = v_source_company_id AND tenant_id = v_target_tenant LIMIT 1)
-            UNION ALL
-            (SELECT 1 FROM core.business_processes    WHERE company_id = v_source_company_id AND tenant_id = v_target_tenant LIMIT 1)
-        ) chk;
-        IF v_count > 0 THEN
-            RAISE NOTICE '  [WARNING] Core company already partially in target tenant. Overlapping rows will be skipped.';
-        ELSE
-            RAISE NOTICE '  [OK] Core company not yet in target tenant.';
-        END IF;
+        RAISE NOTICE '  [ COPY mode — new company UUID % will be used ]', v_new_company_id;
+        RAISE NOTICE '  [ Checking twin.company name+region conflict in target tenant ]';
 
         SELECT COUNT(*) INTO v_count
         FROM twin.company s
@@ -377,10 +365,8 @@ BEGIN
         ELSE
             RAISE NOTICE '  [OK] twin.company not yet in target tenant.';
         END IF;
-
     END IF;
 
-    -- Abort MOVE on conflicts
     IF v_mode = 'MOVE' AND v_has_conflicts THEN
         RAISE NOTICE '';
         RAISE NOTICE '========================================================';
@@ -416,16 +402,34 @@ BEGIN
         IF NOT v_has_company_id THEN CONTINUE; END IF;
 
         IF v_mode = 'MOVE' THEN
-            EXECUTE format(
-                'UPDATE %I.%I SET tenant_id = %L WHERE company_id = %L AND tenant_id = %L',
-                v_schema, v_table, v_target_tenant, v_source_company_id, v_source_tenant
-            );
-        ELSE -- COPY
+            -- Detect which updated timestamp column this table has
+            SELECT column_name INTO v_update_ts_col
+            FROM information_schema.columns
+            WHERE table_schema = v_schema AND table_name = v_table
+              AND column_name IN ('updated_at', 'updated_ts')
+            LIMIT 1;
+
+            IF v_update_ts_col IS NOT NULL THEN
+                EXECUTE format(
+                    'UPDATE %I.%I SET tenant_id = %L, %I = NOW() WHERE company_id = %L AND tenant_id = %L',
+                    v_schema, v_table, v_target_tenant, v_update_ts_col, v_source_company_id, v_source_tenant
+                );
+            ELSE
+                EXECUTE format(
+                    'UPDATE %I.%I SET tenant_id = %L WHERE company_id = %L AND tenant_id = %L',
+                    v_schema, v_table, v_target_tenant, v_source_company_id, v_source_tenant
+                );
+            END IF;
+
+        ELSE -- COPY: replace company_id, tenant_id, and all timestamp columns
             SELECT
                 string_agg(
-                    CASE WHEN column_name = 'tenant_id'
-                         THEN quote_literal(v_target_tenant)
-                         ELSE quote_ident(column_name)
+                    CASE
+                        WHEN column_name = 'tenant_id'                          THEN quote_literal(v_target_tenant)
+                        WHEN column_name = 'company_id'                         THEN quote_literal(v_new_company_id)
+                        WHEN column_name IN ('created_at', 'created_ts')        THEN 'NOW()'
+                        WHEN column_name IN ('updated_at', 'updated_ts')        THEN 'NOW()'
+                        ELSE quote_ident(column_name)
                     END, ', ' ORDER BY ordinal_position
                 ),
                 string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)
@@ -464,9 +468,10 @@ BEGIN
 
     ELSE -- COPY
 
+        -- Create twin.company using v_new_company_id so it matches core company_id
         v_new_company_uuid := NULL;
         INSERT INTO twin.company (id, name, industry, region, legal_entity, tenant_id, created_at, updated_at)
-        SELECT gen_random_uuid(), name, industry, region, legal_entity, v_target_tenant, NOW(), NOW()
+        SELECT v_new_company_id, name, industry, region, legal_entity, v_target_tenant, NOW(), NOW()
         FROM twin.company
         WHERE id = v_twin_company_id AND tenant_id = v_source_tenant
         ON CONFLICT (lower(name), lower(region), tenant_id) DO NOTHING
@@ -474,9 +479,9 @@ BEGIN
 
         IF v_new_company_uuid IS NULL THEN
             RAISE NOTICE '  %-44s : SKIPPED — already exists in target tenant', 'twin.company';
-            RAISE NOTICE '  NOTE: twin child tables also skipped — resolve twin.company conflict first.';
+            RAISE NOTICE '  NOTE: twin child tables also skipped.';
         ELSE
-            RAISE NOTICE '  %-44s : 1 row  → new id: %', 'twin.company', v_new_company_uuid;
+            RAISE NOTICE '  %-44s : 1 row  → id: % (matches new core company_id)', 'twin.company', v_new_company_uuid;
             v_total := v_total + 1;
 
             -- Copy dim_nodes, build old→new UUID map
@@ -484,7 +489,7 @@ BEGIN
             FOR v_node_rec IN
                 SELECT * FROM twin.dim_node WHERE company_id = v_twin_company_id
             LOOP
-                v_new_id := gen_random_uuid();
+                v_new_id   := gen_random_uuid();
                 v_node_map := v_node_map || jsonb_build_object(v_node_rec.id::TEXT, v_new_id::TEXT);
 
                 INSERT INTO twin.dim_node (
@@ -502,10 +507,10 @@ BEGIN
                 );
                 v_total := v_total + 1;
             END LOOP;
-            SELECT COUNT(*) INTO v_rows FROM twin.dim_node WHERE company_id = v_twin_company_id;
+            SELECT COUNT(*) INTO v_rows FROM twin.dim_node WHERE company_id = v_new_company_uuid;
             RAISE NOTICE '  %-44s : % row(s)', 'twin.dim_node', v_rows;
 
-            -- Copy dim_edges (remap source_id + target_id)
+            -- Copy dim_edges
             INSERT INTO twin.dim_edge (id, source_id, target_id, rel_type, weight, meta, valid_from, valid_to)
             SELECT
                 gen_random_uuid(),
@@ -522,7 +527,7 @@ BEGIN
             RAISE NOTICE '  %-44s : % row(s)', 'twin.dim_edge', v_rows;
             v_total := v_total + v_rows;
 
-            -- Copy source_refs (remap dim_node_id)
+            -- Copy source_refs
             INSERT INTO twin.source_ref (id, dim_node_id, system_name, external_id, mcp_tool, last_synced, created_at)
             SELECT
                 gen_random_uuid(),
@@ -537,7 +542,7 @@ BEGIN
             RAISE NOTICE '  %-44s : % row(s)', 'twin.source_ref', v_rows;
             v_total := v_total + v_rows;
 
-            -- Copy dim_node_attachments (remap node_id)
+            -- Copy dim_node_attachments
             INSERT INTO twin.dim_node_attachment (id, node_id, filename, content_type, size_bytes, data, uploaded_at)
             SELECT
                 gen_random_uuid(),
@@ -551,9 +556,9 @@ BEGIN
             RAISE NOTICE '  %-44s : % row(s)', 'twin.dim_node_attachment', v_rows;
             v_total := v_total + v_rows;
 
-            -- Copy context_log (remap company_id to new UUID)
+            -- Copy context_log
             INSERT INTO twin.context_log (id, company_id, caller_type, caller_id, chunk_ids, tokens_used, llm_target, created_at)
-            SELECT gen_random_uuid(), v_new_company_uuid, caller_type, caller_id, chunk_ids, tokens_used, llm_target, created_at
+            SELECT gen_random_uuid(), v_new_company_uuid, caller_type, caller_id, chunk_ids, tokens_used, llm_target, NOW()
             FROM twin.context_log
             WHERE company_id = v_twin_company_id
             ON CONFLICT DO NOTHING;
@@ -595,8 +600,8 @@ BEGIN
     RAISE NOTICE '========================================================';
     RAISE NOTICE '% complete. % total row(s) affected.', v_mode, v_total;
     IF v_mode = 'COPY' THEN
-        RAISE NOTICE 'Source records in tenant % are unchanged.', v_source_tenant;
-        RAISE NOTICE 'Rows with conflicting unique keys were silently skipped.';
+        RAISE NOTICE 'New company UUID  : %', v_new_company_id;
+        RAISE NOTICE 'Source (company %, tenant %) is unchanged.', v_source_company_id, v_source_tenant;
     END IF;
     RAISE NOTICE '========================================================';
 
