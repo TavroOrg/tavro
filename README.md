@@ -8,7 +8,7 @@
   <p><em>Accelerating Successful AI Deployments Using an Enterprise Digital Twin.</em></p>
   
   <div align="center">
-  <img src="assets\images\EnterpriseDigitalTwin.png" alt="Enterprise Digital Twin" width="400">
+  <img src="assets\images\layers-of-tavro.png" alt="Enterprise Digital Twin" width="400">
 </div>
 
   <p>
