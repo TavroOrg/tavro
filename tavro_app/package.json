@@ -34,7 +34,8 @@
     "brace-expansion": "1.1.21",
     "baseline-browser-mapping": "2.11.35",
     "fflate": "0.8.3",
-    "js-yaml": "4.3.2"
+    "js-yaml": "4.3.2",
+    "browserslist": "4.29.5"
   },
   "devDependencies": {
     "@emnapi/core": "^1.7.1",
