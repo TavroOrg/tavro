@@ -16,6 +16,13 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.18.5"
   },
+  "overrides": {
+    "postcss-selector-parser": "6.1.6",
+    "brace-expansion@1": "1.1.21",
+    "baseline-browser-mapping": "2.11.35",
+    "js-yaml": "4.3.2",
+    "browserslist": "4.29.5"
+  },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
     "@types/react": "^18.3.12",
