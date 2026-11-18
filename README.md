@@ -3,12 +3,12 @@
   <!-- LOGO: upload travo_logo.png to your repo and update the src below -->
   <img src="assets\images\travo_logo.png" alt="Tavro Logo" width="80" />
 
-  <h1>Tavro Agent BizOps</h1>
+  <h1>Accelerate AI Adoption</h1>
 
-  <p><em>Accelerating enterprise agent adoption through metadata-driven BizOps.</em></p>
+  <p><em>Accelerating Successful AI Deployments Using an Enterprise Digital Twin.</em></p>
   
   <div align="center">
-  <img src="assets\images\agentbizops3.png" alt="Agent BizOps" width="400">
+  <img src="assets\images\layers-of-tavro.png" alt="Enterprise Digital Twin" width="400">
 </div>
 
   <p>
