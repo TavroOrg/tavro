@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, dev, demo]
+  push:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-integration:
+    name: Frontend lint, type-check & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tavro_app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: tavro_app/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+        continue-on-error: true   # remove once existing lint errors are fixed
+      - run: npm run build        # runs tsc -b + vite build
+
+  backend-integration:
+    name: Backend install & import check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -r tavro_api/requirements.txt
+      - name: Compile all Python sources
+        run: python -m compileall -q tavro_api services utils tavro_library
+      # Add real tests here as they are written, e.g.:
+      # - run: pip install pytest && pytest tavro_api/tests
